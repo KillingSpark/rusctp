@@ -1,5 +1,5 @@
 mod packet;
-use packet::*;
+pub use packet::*;
 
 mod port;
 use port::Port;
@@ -33,16 +33,19 @@ where
     }
 
     pub fn receive_data(&mut self, data: &[u8]) {
-        let new_port = data[0] == 1; // TODO lel
-        if new_port {
-            self.make_new_port(0);
+        let Some(packet) = Packet::parse(data) else {
+            return;
+        };
+        if let PacketKind::Signal(Signal::Init(port_id)) = packet.packet() {
+            self.make_new_port(*port_id);
         } else {
-            let port_id = 0;
+            let port_id = packet.to().port();
             let Some(sender) = self.port_channels.get(&port_id) else {
                 return;
             };
-            if let Err(_err) = sender.send(Packet::parse(data)) {
+            if let Err(_err) = sender.send(packet) {
                 // TODO handle err
+                // maybe just drop? This is basically the receive window right?
             }
             self.ports_need_tick.push(port_id)
         }
