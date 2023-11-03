@@ -11,12 +11,17 @@ use std::{
 
 type PortId = u16;
 
+struct PerPortInfo {
+    sender: Sender<(PortId, Chunk)>,
+    verification_tag: u32,
+}
+
 pub struct Sctp<PortCb>
 where
     PortCb: FnMut(Port),
 {
     new_port_cb: PortCb,
-    port_channels: HashMap<PortId, Sender<(PortId, Chunk)>>,
+    port_channels: HashMap<PortId, PerPortInfo>,
     ports_need_tick: BinaryHeap<PortId>,
 }
 
@@ -37,20 +42,29 @@ where
             return;
         };
         data = &data[12..];
+
+        if self.handle_init(&packet, data) {
+            return;
+        }
+
+        let port_id = packet.to();
+        let Some(port_info) = self.port_channels.get(&port_id) else {
+            return;
+        };
+        if port_info.verification_tag != packet.verification_tag() {
+            return;
+        }
+
         while !data.is_empty() {
             let Some((size, chunk)) = Chunk::parse(data) else {
                 break;
             };
             data = &data[size..];
 
-            if let Chunk::Signal(Signal::Init(port_id)) = chunk {
-                self.make_new_port(port_id);
+            if let Chunk::Signal(Signal::Init) = chunk {
+                // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
             } else {
-                let port_id = packet.to();
-                let Some(sender) = self.port_channels.get(&port_id) else {
-                    return;
-                };
-                if let Err(_err) = sender.send((packet.to(), chunk)) {
+                if let Err(_err) = port_info.sender.send((packet.to(), chunk)) {
                     // TODO handle err
                     // maybe just drop? This is basically the receive window right?
                 }
@@ -59,13 +73,32 @@ where
         }
     }
 
+    fn handle_init(&mut self, packet: &Packet, data: &[u8]) -> bool {
+        let Some((_size, chunk)) = Chunk::parse(data) else {
+            return false;
+        };
+        // TODO make sure size and data.len() match
+        if let Chunk::Signal(Signal::Init) = chunk {
+            self.make_new_port(packet);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn ports_need_tick(&self) -> impl Iterator<Item = PortId> + '_ {
         self.ports_need_tick.iter().copied()
     }
 
-    fn make_new_port(&mut self, port_id: PortId) {
+    fn make_new_port(&mut self, packet: &Packet) {
         let (sender, receiver) = std::sync::mpsc::channel();
-        self.port_channels.insert(port_id, sender);
-        (self.new_port_cb)(Port::new(port_id, receiver))
+        self.port_channels.insert(
+            packet.to(),
+            PerPortInfo {
+                sender: sender,
+                verification_tag: packet.verification_tag(),
+            },
+        );
+        (self.new_port_cb)(Port::new(packet.to(), receiver))
     }
 }

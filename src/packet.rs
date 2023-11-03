@@ -4,7 +4,6 @@ pub struct Packet {
     from: PortId,
     to: PortId,
     verification_tag: u32,
-    checksum: u32,
 }
 
 impl Packet {
@@ -16,11 +15,19 @@ impl Packet {
 
         // TODO check verification tag and checksum
 
+        let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
+        let mut digest = crc.digest();
+        digest.update(&data[..8]);
+        digest.update(&[0, 0, 0, 0]);
+        digest.update(&data[12..]);
+        if !digest.finalize().eq(&checksum) {
+            return None;
+        }
+
         Some(Self {
             from,
             to,
             verification_tag,
-            checksum,
         })
     }
 
@@ -31,6 +38,10 @@ impl Packet {
     pub fn to(&self) -> PortId {
         self.to
     }
+
+    pub fn verification_tag(&self) -> u32 {
+        self.verification_tag
+    }
 }
 
 pub enum Chunk {
@@ -40,7 +51,7 @@ pub enum Chunk {
 
 pub enum Signal {
     HeartBeat,
-    Init(PortId),
+    Init,
 }
 
 pub struct DataSegment {}
