@@ -16,7 +16,7 @@ where
     PortCb: FnMut(Port),
 {
     new_port_cb: PortCb,
-    port_channels: HashMap<PortId, Sender<Packet>>,
+    port_channels: HashMap<PortId, Sender<(PortId, Chunk)>>,
     ports_need_tick: BinaryHeap<PortId>,
 }
 
@@ -32,22 +32,30 @@ where
         }
     }
 
-    pub fn receive_data(&mut self, data: &[u8]) {
+    pub fn receive_data(&mut self, mut data: &[u8]) {
         let Some(packet) = Packet::parse(data) else {
             return;
         };
-        if let PacketKind::Signal(Signal::Init(port_id)) = packet.packet() {
-            self.make_new_port(*port_id);
-        } else {
-            let port_id = packet.to().port();
-            let Some(sender) = self.port_channels.get(&port_id) else {
-                return;
+        data = &data[12..];
+        while !data.is_empty() {
+            let Some((size, chunk)) = Chunk::parse(data) else {
+                break;
             };
-            if let Err(_err) = sender.send(packet) {
-                // TODO handle err
-                // maybe just drop? This is basically the receive window right?
+            data = &data[size..];
+
+            if let Chunk::Signal(Signal::Init(port_id)) = chunk {
+                self.make_new_port(port_id);
+            } else {
+                let port_id = packet.to();
+                let Some(sender) = self.port_channels.get(&port_id) else {
+                    return;
+                };
+                if let Err(_err) = sender.send((packet.to(), chunk)) {
+                    // TODO handle err
+                    // maybe just drop? This is basically the receive window right?
+                }
+                self.ports_need_tick.push(port_id)
             }
-            self.ports_need_tick.push(port_id)
         }
     }
 

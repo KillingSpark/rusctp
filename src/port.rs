@@ -1,15 +1,15 @@
 use std::sync::mpsc::Receiver;
 
-use crate::packet::Packet;
+use crate::packet::Chunk;
 use crate::PortId;
 
 pub struct Port {
     port_id: PortId,
-    receiver: Receiver<Packet>,
+    receiver: Receiver<(PortId, Chunk)>,
 }
 
 impl Port {
-    pub(crate) fn new(port_id: PortId, receiver: Receiver<Packet>) -> Self {
+    pub(crate) fn new(port_id: PortId, receiver: Receiver<(PortId, Chunk)>) -> Self {
         Self { port_id, receiver }
     }
 
