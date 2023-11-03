@@ -61,7 +61,7 @@ where
             };
             data = &data[size..];
 
-            if let Chunk::Signal(Signal::Init) = chunk {
+            if let ChunkKind::Init = chunk.kind() {
                 // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
             } else {
                 if let Err(_err) = port_info.sender.send((packet.to(), chunk)) {
@@ -78,7 +78,7 @@ where
             return false;
         };
         // TODO make sure size and data.len() match
-        if let Chunk::Signal(Signal::Init) = chunk {
+        if let ChunkKind::Init = chunk.into_kind() {
             self.make_new_port(packet);
             true
         } else {

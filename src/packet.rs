@@ -44,20 +44,76 @@ impl Packet {
     }
 }
 
-pub enum Chunk {
-    Signal(Signal),
-    Data(DataSegment),
+pub struct Chunk {
+    flags: u8,
+    kind: ChunkKind,
 }
 
-pub enum Signal {
-    HeartBeat,
+pub enum ChunkKind {
     Init,
+    InitAck,
+    SAck,
+    HeartBeat,
+    HeartBeatAck,
+    Abort,
+    ShutDown,
+    ShutDownAck,
+    OpError,
+    StateCookie,
+    StateCookieAck,
+    _ReservedECNE,
+    _ReservedCWR,
+    ShutDownComplete,
+    Data(DataSegment),
 }
 
 pub struct DataSegment {}
 
 impl Chunk {
-    pub fn parse(_data: &[u8]) -> Option<(usize, Self)> {
-        todo!()
+    pub fn parse(data: &[u8]) -> Option<(usize, Self)> {
+        const CHUNK_HEADER_SIZE: usize = 4;
+        if data.len() < CHUNK_HEADER_SIZE {
+            return None;
+        }
+        let typ = data[0];
+        let flags = data[1];
+        let len = u16::from_be_bytes(data[2..4].try_into().ok()?);
+
+        let _value = &data[CHUNK_HEADER_SIZE..];
+
+        match typ {
+            0 => Some(ChunkKind::Data(DataSegment {})),
+            1 => Some(ChunkKind::Init),
+            2 => Some(ChunkKind::InitAck),
+            3 => Some(ChunkKind::SAck),
+            4 => Some(ChunkKind::HeartBeat),
+            5 => Some(ChunkKind::HeartBeatAck),
+            6 => Some(ChunkKind::Abort),
+            7 => Some(ChunkKind::ShutDown),
+            8 => Some(ChunkKind::ShutDownAck),
+            9 => Some(ChunkKind::OpError),
+            10 => Some(ChunkKind::StateCookie),
+            11 => Some(ChunkKind::StateCookieAck),
+            12 => Some(ChunkKind::_ReservedECNE),
+            13 => Some(ChunkKind::_ReservedCWR),
+            14 => Some(ChunkKind::ShutDownComplete),
+            _ => {
+                // TODO this needs to check the typ and act accordingly maybe cutting the connection
+                None
+            }
+        }
+        .map(|chunk| (len as usize, Chunk { flags, kind: chunk }))
+    }
+
+    pub fn kind(&self) -> &ChunkKind {
+        &self.kind
+    }
+
+    pub fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    pub fn into_kind(self) -> ChunkKind {
+        self.kind
     }
 }
