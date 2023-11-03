@@ -1,4 +1,5 @@
 mod packet;
+use bytes::Bytes;
 pub use packet::*;
 
 mod port;
@@ -37,13 +38,13 @@ where
         }
     }
 
-    pub fn receive_data(&mut self, mut data: &[u8]) {
-        let Some(packet) = Packet::parse(data) else {
+    pub fn receive_data(&mut self, mut data: Bytes) {
+        let Some(packet) = Packet::parse(&data) else {
             return;
         };
-        data = &data[12..];
+        data = data.slice(12..);
 
-        if self.handle_init(&packet, data) {
+        if self.handle_init(&packet, &data) {
             return;
         }
 
@@ -56,10 +57,10 @@ where
         }
 
         while !data.is_empty() {
-            let Some((size, chunk)) = Chunk::parse(data) else {
+            let Some((size, chunk)) = Chunk::parse(&data) else {
                 break;
             };
-            data = &data[size..];
+            data = data.slice(size..);
 
             if let ChunkKind::Init = chunk.kind() {
                 // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
@@ -73,7 +74,7 @@ where
         }
     }
 
-    fn handle_init(&mut self, packet: &Packet, data: &[u8]) -> bool {
+    fn handle_init(&mut self, packet: &Packet, data: &Bytes) -> bool {
         let Some((_size, chunk)) = Chunk::parse(data) else {
             return false;
         };

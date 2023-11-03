@@ -1,3 +1,5 @@
+use bytes::Bytes;
+
 use crate::PortId;
 
 pub struct Packet {
@@ -50,6 +52,7 @@ pub struct Chunk {
 }
 
 pub enum ChunkKind {
+    Data(DataSegment),
     Init,
     InitAck,
     SAck,
@@ -64,13 +67,14 @@ pub enum ChunkKind {
     _ReservedECNE,
     _ReservedCWR,
     ShutDownComplete,
-    Data(DataSegment),
 }
 
-pub struct DataSegment {}
+pub struct DataSegment {
+    pub(crate) buf: Bytes,
+}
 
 impl Chunk {
-    pub fn parse(data: &[u8]) -> Option<(usize, Self)> {
+    pub fn parse(data: &Bytes) -> Option<(usize, Self)> {
         const CHUNK_HEADER_SIZE: usize = 4;
         if data.len() < CHUNK_HEADER_SIZE {
             return None;
@@ -79,10 +83,10 @@ impl Chunk {
         let flags = data[1];
         let len = u16::from_be_bytes(data[2..4].try_into().ok()?);
 
-        let _value = &data[CHUNK_HEADER_SIZE..];
+        let value = data.slice(CHUNK_HEADER_SIZE..);
 
         match typ {
-            0 => Some(ChunkKind::Data(DataSegment {})),
+            0 => Some(ChunkKind::Data(DataSegment { buf: value })),
             1 => Some(ChunkKind::Init),
             2 => Some(ChunkKind::InitAck),
             3 => Some(ChunkKind::SAck),
