@@ -15,8 +15,6 @@ impl Packet {
         let verification_tag = u32::from_be_bytes(data[4..8].try_into().ok()?);
         let checksum = u32::from_be_bytes(data[8..12].try_into().ok()?);
 
-        // TODO check verification tag and checksum
-
         let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
         let mut digest = crc.digest();
         digest.update(&data[..8]);
@@ -73,40 +71,80 @@ pub struct DataSegment {
     pub(crate) buf: Bytes,
 }
 
+pub enum UnrecognizedChunkReaction {
+    Stop { report: bool },
+    Skip { report: bool },
+}
+
+impl UnrecognizedChunkReaction {
+    pub fn report(&self) -> bool {
+        match self {
+            Self::Skip { report } => *report,
+            Self::Stop { report } => *report,
+        }
+    }
+}
+
 impl Chunk {
-    pub fn parse(data: &Bytes) -> Option<(usize, Self)> {
+    pub fn parse(data: &Bytes) -> (usize, Result<Self, UnrecognizedChunkReaction>) {
         const CHUNK_HEADER_SIZE: usize = 4;
         if data.len() < CHUNK_HEADER_SIZE {
-            return None;
+            return (
+                data.len(),
+                Err(UnrecognizedChunkReaction::Stop { report: false }),
+            );
         }
         let typ = data[0];
         let flags = data[1];
-        let len = u16::from_be_bytes(data[2..4].try_into().ok()?);
+        let len = u16::from_be_bytes(data[2..4].try_into().expect("This range is checked above"));
 
         let value = data.slice(CHUNK_HEADER_SIZE..);
 
-        match typ {
-            0 => Some(ChunkKind::Data(DataSegment { buf: value })),
-            1 => Some(ChunkKind::Init),
-            2 => Some(ChunkKind::InitAck),
-            3 => Some(ChunkKind::SAck),
-            4 => Some(ChunkKind::HeartBeat),
-            5 => Some(ChunkKind::HeartBeatAck),
-            6 => Some(ChunkKind::Abort),
-            7 => Some(ChunkKind::ShutDown),
-            8 => Some(ChunkKind::ShutDownAck),
-            9 => Some(ChunkKind::OpError),
-            10 => Some(ChunkKind::StateCookie),
-            11 => Some(ChunkKind::StateCookieAck),
-            12 => Some(ChunkKind::_ReservedECNE),
-            13 => Some(ChunkKind::_ReservedCWR),
-            14 => Some(ChunkKind::ShutDownComplete),
-            _ => {
-                // TODO this needs to check the typ and act accordingly maybe cutting the connection
-                None
-            }
-        }
-        .map(|chunk| (len as usize, Chunk { flags, kind: chunk }))
+        let kind = match typ {
+            0 => ChunkKind::Data(DataSegment { buf: value }),
+            1 => ChunkKind::Init,
+            2 => ChunkKind::InitAck,
+            3 => ChunkKind::SAck,
+            4 => ChunkKind::HeartBeat,
+            5 => ChunkKind::HeartBeatAck,
+            6 => ChunkKind::Abort,
+            7 => ChunkKind::ShutDown,
+            8 => ChunkKind::ShutDownAck,
+            9 => ChunkKind::OpError,
+            10 => ChunkKind::StateCookie,
+            11 => ChunkKind::StateCookieAck,
+            12 => ChunkKind::_ReservedECNE,
+            13 => ChunkKind::_ReservedCWR,
+            14 => ChunkKind::ShutDownComplete,
+            _ => match typ >> 6 {
+                0 => {
+                    return (
+                        len as usize,
+                        Err(UnrecognizedChunkReaction::Stop { report: false }),
+                    )
+                }
+                1 => {
+                    return (
+                        len as usize,
+                        Err(UnrecognizedChunkReaction::Stop { report: true }),
+                    )
+                }
+                2 => {
+                    return (
+                        len as usize,
+                        Err(UnrecognizedChunkReaction::Skip { report: false }),
+                    )
+                }
+                3 => {
+                    return (
+                        len as usize,
+                        Err(UnrecognizedChunkReaction::Skip { report: true }),
+                    )
+                }
+                _ => unreachable!("This can onlyy have 4 values"),
+            },
+        };
+        (len as usize, Ok(Chunk { flags, kind }))
     }
 
     pub fn kind(&self) -> &ChunkKind {

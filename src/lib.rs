@@ -1,5 +1,5 @@
 mod packet;
-use bytes::Bytes;
+use bytes::{Bytes, Buf};
 pub use packet::*;
 
 mod port;
@@ -42,7 +42,7 @@ where
         let Some(packet) = Packet::parse(&data) else {
             return;
         };
-        data = data.slice(12..);
+        data.advance(12);
 
         if self.handle_init(&packet, &data) {
             return;
@@ -57,25 +57,35 @@ where
         }
 
         while !data.is_empty() {
-            let Some((size, chunk)) = Chunk::parse(&data) else {
-                break;
-            };
-            data = data.slice(size..);
+            let (size, chunk) = Chunk::parse(&data);
+            data.advance(size);
 
-            if let ChunkKind::Init = chunk.kind() {
-                // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
-            } else {
-                if let Err(_err) = port_info.sender.send((packet.to(), chunk)) {
-                    // TODO handle err
-                    // maybe just drop? This is basically the receive window right?
+            match chunk {
+                Ok(chunk) => {
+                    if let ChunkKind::Init = chunk.kind() {
+                        // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
+                    } else {
+                        if let Err(_err) = port_info.sender.send((packet.to(), chunk)) {
+                            // TODO handle err
+                            // maybe just drop? This is basically the receive window right?
+                        }
+                        self.ports_need_tick.push(port_id)
+                    }
                 }
-                self.ports_need_tick.push(port_id)
+                Err(UnrecognizedChunkReaction::Skip { report: _ }) => {
+                    // TODO report if necessary
+                    continue;
+                }
+                Err(UnrecognizedChunkReaction::Stop { report: _ }) => {
+                    // TODO report if necessary
+                    break;
+                }
             }
         }
     }
 
     fn handle_init(&mut self, packet: &Packet, data: &Bytes) -> bool {
-        let Some((_size, chunk)) = Chunk::parse(data) else {
+        let (_size, Ok(chunk)) = Chunk::parse(data) else {
             return false;
         };
         // TODO make sure size and data.len() match
