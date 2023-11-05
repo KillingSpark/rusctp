@@ -3,7 +3,7 @@ use std::sync::mpsc::Receiver;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::data::DataSegment;
+use crate::data::DataChunk;
 use crate::packet::Chunk;
 use crate::{AssocId, SendToAssoc, TransportAddress};
 
@@ -11,8 +11,8 @@ pub struct Association {
     id: AssocId,
     receiver: Receiver<SendToAssoc>,
     primary_path: TransportAddress,
-    in_queue: VecDeque<DataSegment>,
-    out_queue: VecDeque<DataSegment>,
+    in_queue: VecDeque<DataChunk>,
+    out_queue: VecDeque<DataChunk>,
 }
 
 impl Association {

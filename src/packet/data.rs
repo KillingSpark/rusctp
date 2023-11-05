@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes};
 
-pub struct DataSegment {
+pub struct DataChunk {
     tsn: u32,
     stream_id: u16,
     stream_seq_num: u16,
@@ -13,7 +13,7 @@ pub struct DataSegment {
     end: bool,
 }
 
-impl DataSegment {
+impl DataChunk {
     pub fn parse(flags: u8, mut data: Bytes) -> Option<Self> {
         if data.len() < 13 {
             return None;

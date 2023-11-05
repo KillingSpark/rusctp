@@ -4,7 +4,7 @@ use crate::TransportAddress;
 
 use self::{
     cookie::StateCookie,
-    data::DataSegment,
+    data::DataChunk,
     init::{InitAck, InitChunk},
 };
 
@@ -55,7 +55,7 @@ impl Packet {
 }
 
 pub enum Chunk {
-    Data(DataSegment),
+    Data(DataChunk),
     Init(init::InitChunk),
     InitAck(init::InitAck),
     SAck,
@@ -121,7 +121,7 @@ impl Chunk {
 
         let chunk = match typ {
             0 => {
-                let Some(data) = DataSegment::parse(flags, value) else {
+                let Some(data) = DataChunk::parse(flags, value) else {
                     return (len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::Data(data)
