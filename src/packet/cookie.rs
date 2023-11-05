@@ -35,11 +35,11 @@ impl StateCookie {
         todo!()
     }
 
-    pub fn serialize(&self, _buf: &mut impl BufMut) -> usize {
+    pub fn serialized_size(&self) -> usize {
         todo!()
     }
 
-    pub fn serialized_size(&self) -> usize {
+    pub fn serialize(&self, _buf: &mut impl BufMut) -> usize {
         todo!()
     }
 }

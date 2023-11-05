@@ -46,6 +46,26 @@ impl InitChunk {
             supported_addr_types: None,
         })
     }
+
+    pub fn serialized_size(&self) -> usize {
+        4 + 16 /*  TODO params */
+    }
+
+    pub fn serialize(&self, buf: &mut impl BufMut) {
+        // header
+        buf.put_u8(1);
+        buf.put_u8(0);
+        buf.put_u16(self.serialized_size() as u16);
+
+        // value
+        buf.put_u32(self.initiate_tag);
+        buf.put_u32(self.a_rwnd);
+        buf.put_u16(self.outbound_streams);
+        buf.put_u16(self.inbound_streams);
+        buf.put_u32(self.initial_tsn);
+
+        // TODO params
+    }
 }
 
 pub struct InitAck {

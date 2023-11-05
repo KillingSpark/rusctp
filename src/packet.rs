@@ -207,6 +207,14 @@ impl Chunk {
         }
     }
 
+    pub fn serialized_size(&self) -> usize {
+        match self {
+            Chunk::Data(data) => data.serialized_size(),
+            Chunk::StateCookieAck => COOKIE_ACK_BYTES.len(),
+            _ => unimplemented!(),
+        }
+    }
+
     pub fn cookie_ack_bytes() -> Bytes {
         Bytes::from_static(COOKIE_ACK_BYTES)
     }

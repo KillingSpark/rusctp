@@ -42,12 +42,16 @@ impl DataChunk {
         })
     }
 
+    pub fn serialized_size(&self) -> usize {
+        16 + self.buf.len()
+    }
+
     pub fn serialize(&self, buf: &mut impl BufMut) {
         if self.buf.len() > 0 {
             // header
             buf.put_u8(0);
             buf.put_u8(self.serialize_flags());
-            buf.put_u16(16u16 + self.buf.len() as u16);
+            buf.put_u16(self.serialized_size() as u16);
 
             // value
             buf.put_u32(self.tsn);

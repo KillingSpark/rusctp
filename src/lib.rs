@@ -180,7 +180,7 @@ where
                 mac,
             };
             let init_ack = Chunk::InitAck(self.create_init_ack(cookie));
-            let mut buf = BytesMut::new();
+            let mut buf = BytesMut::with_capacity(init_ack.serialized_size());
             // TODO put packet header here
             init_ack.serialize(&mut buf);
             send_data(buf.freeze(), from);
