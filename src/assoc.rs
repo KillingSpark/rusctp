@@ -3,20 +3,20 @@ use std::sync::mpsc::Receiver;
 use bytes::Bytes;
 
 use crate::packet::Chunk;
-use crate::{ChunkKind, PortId};
+use crate::{ChunkKind, AssocId};
 
-pub struct Port {
-    port_id: PortId,
-    receiver: Receiver<(PortId, Chunk)>,
+pub struct Association {
+    id: AssocId,
+    receiver: Receiver<(AssocId, Chunk)>,
 }
 
-impl Port {
-    pub(crate) fn new(port_id: PortId, receiver: Receiver<(PortId, Chunk)>) -> Self {
-        Self { port_id, receiver }
+impl Association {
+    pub(crate) fn new(id: AssocId, receiver: Receiver<(AssocId, Chunk)>) -> Self {
+        Self { id, receiver }
     }
 
-    pub fn port_id(&self) -> PortId {
-        self.port_id
+    pub fn id(&self) -> AssocId {
+        self.id
     }
 
     pub fn tick(

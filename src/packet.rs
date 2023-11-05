@@ -1,10 +1,10 @@
 use bytes::Bytes;
 
-use crate::PortId;
+use crate::TransportAddress;
 
 pub struct Packet {
-    from: PortId,
-    to: PortId,
+    from: u16,
+    to: u16,
     verification_tag: u32,
 }
 
@@ -31,11 +31,11 @@ impl Packet {
         })
     }
 
-    pub fn from(&self) -> PortId {
+    pub fn from(&self) -> u16 {
         self.from
     }
 
-    pub fn to(&self) -> PortId {
+    pub fn to(&self) -> u16 {
         self.to
     }
 
@@ -51,7 +51,7 @@ pub struct Chunk {
 
 pub enum ChunkKind {
     Data(DataSegment),
-    Init,
+    Init(InitChunk),
     InitAck,
     SAck,
     HeartBeat,
@@ -85,6 +85,10 @@ impl UnrecognizedChunkReaction {
     }
 }
 
+pub struct InitChunk {
+    pub aliases: Vec<TransportAddress>,
+}
+
 impl Chunk {
     pub fn parse(data: &Bytes) -> (usize, Result<Self, UnrecognizedChunkReaction>) {
         const CHUNK_HEADER_SIZE: usize = 4;
@@ -102,7 +106,7 @@ impl Chunk {
 
         let kind = match typ {
             0 => ChunkKind::Data(DataSegment { buf: value }),
-            1 => ChunkKind::Init,
+            1 => ChunkKind::Init(InitChunk { aliases: vec![] }),
             2 => ChunkKind::InitAck,
             3 => ChunkKind::SAck,
             4 => ChunkKind::HeartBeat,
