@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 
 use crate::TransportAddress;
 
@@ -199,8 +199,9 @@ impl Chunk {
         (len, Ok(chunk))
     }
 
-    pub fn serialize(&self, buf: &mut BytesMut) {
+    pub fn serialize(&self, buf: &mut impl BufMut) {
         match self {
+            Chunk::Data(data) => data.serialize(buf),
             Chunk::StateCookieAck => buf.put_slice(COOKIE_ACK_BYTES),
             _ => unimplemented!(),
         }

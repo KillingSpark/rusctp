@@ -1,4 +1,4 @@
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 
 pub struct DataSegment {
     tsn: u32,
@@ -23,9 +23,9 @@ impl DataSegment {
         let stream_seq_num = data.get_u16();
         let ppid = data.get_u32();
 
-        let immediate = (flags >> 3) & 0x1 == 1;
-        let unordered = (flags >> 2) & 0x1 == 1;
-        let begin = (flags >> 1) & 0x1 == 1;
+        let immediate = flags & (0x1 << 3) == 1;
+        let unordered = flags & (0x1 << 2) == 1;
+        let begin = flags & (0x1 << 1) == 1;
         let end = flags & 0x1 == 1;
 
         Some(Self {
@@ -40,5 +40,43 @@ impl DataSegment {
             begin,
             end,
         })
+    }
+
+    pub fn serialize(&self, buf: &mut impl BufMut) {
+        if self.buf.len() > 0 {
+            // header
+            buf.put_u8(0);
+            buf.put_u8(self.serialize_flags());
+            buf.put_u16(16u16 + self.buf.len() as u16);
+
+            // value
+            buf.put_u32(self.tsn);
+            buf.put_u16(self.stream_id);
+            buf.put_u16(self.stream_seq_num);
+            buf.put_u32(self.ppid);
+            buf.put_slice(&self.buf);
+        }
+    }
+
+    pub fn serialize_flags(&self) -> u8 {
+        let mut flags = 0;
+
+        if self.immediate {
+            flags |= 0x1 << 3;
+        }
+
+        if self.unordered {
+            flags |= 0x1 << 2;
+        }
+
+        if self.begin {
+            flags |= 0x1 << 1;
+        }
+
+        if self.end {
+            flags |= 0x1;
+        }
+
+        flags
     }
 }
