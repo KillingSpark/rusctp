@@ -28,14 +28,18 @@ pub struct AssocAlias {
     local_port: u16,
 }
 
+pub(crate) enum SendToAssoc {
+    Chunk(Chunk),
+    _PrimaryPathChanged(TransportAddress),
+}
 struct PerAssocInfo {
-    sender: Sender<(AssocId, Chunk)>,
+    sender: Sender<SendToAssoc>,
     verification_tag: u32,
 }
 
 pub struct Sctp<AssocCb>
 where
-    AssocCb: FnMut(Association, TransportAddress),
+    AssocCb: FnMut(Association),
 {
     assoc_id_gen: u64,
     new_assoc_cb: AssocCb,
@@ -48,7 +52,7 @@ where
 
 impl<AssocCb> Sctp<AssocCb>
 where
-    AssocCb: FnMut(Association, TransportAddress),
+    AssocCb: FnMut(Association),
 {
     pub fn new(assoc_cb: AssocCb) -> Self {
         Self {
@@ -113,7 +117,7 @@ where
                     if let Chunk::Init(_) = chunk {
                         // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
                     } else {
-                        if let Err(_err) = assoc_info.sender.send((assoc_id, chunk)) {
+                        if let Err(_err) = assoc_info.sender.send(SendToAssoc::Chunk(chunk)) {
                             // TODO handle err
                             // maybe just drop? This is basically the receive window right?
                         }
@@ -214,7 +218,7 @@ where
             }
 
             data.advance(size);
-            let assoc_id = self.make_new_assoc(packet, cookie, from);
+            let assoc_id = self.make_new_assoc(packet, cookie);
             send_data(Chunk::cookie_ack_bytes(), from);
             Some(assoc_id)
         } else {
@@ -226,7 +230,6 @@ where
         &mut self,
         packet: &Packet,
         state_cookie: StateCookie,
-        from: TransportAddress,
     ) -> AssocId {
         let (sender, receiver) = std::sync::mpsc::channel();
         let assoc_id = self.next_assoc_id();
@@ -238,7 +241,7 @@ where
             },
         );
         let original_alias = AssocAlias {
-            peer_addr: from,
+            peer_addr: state_cookie.init_address,
             peer_port: packet.from(),
             local_port: packet.to(),
         };
@@ -248,7 +251,7 @@ where
             alias.peer_addr = alias_addr;
             self.aliases.insert(alias, assoc_id);
         }
-        (self.new_assoc_cb)(Association::new(assoc_id, receiver), from);
+        (self.new_assoc_cb)(Association::new(assoc_id, receiver, state_cookie.init_address));
         assoc_id
     }
 

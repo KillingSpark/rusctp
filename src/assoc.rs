@@ -1,18 +1,32 @@
+use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::packet::Chunk;
-use crate::AssocId;
+use crate::{AssocId, DataSegment, SendToAssoc, TransportAddress};
 
 pub struct Association {
     id: AssocId,
-    receiver: Receiver<(AssocId, Chunk)>,
+    receiver: Receiver<SendToAssoc>,
+    primary_path: TransportAddress,
+    in_queue: VecDeque<DataSegment>,
+    out_queue: VecDeque<DataSegment>,
 }
 
 impl Association {
-    pub(crate) fn new(id: AssocId, receiver: Receiver<(AssocId, Chunk)>) -> Self {
-        Self { id, receiver }
+    pub(crate) fn new(
+        id: AssocId,
+        receiver: Receiver<SendToAssoc>,
+        primary_path: TransportAddress,
+    ) -> Self {
+        Self {
+            id,
+            receiver,
+            primary_path,
+            in_queue: VecDeque::new(),
+            out_queue: VecDeque::new(),
+        }
     }
 
     pub fn id(&self) -> AssocId {
@@ -21,23 +35,60 @@ impl Association {
 
     pub fn tick(
         &mut self,
-        _now: std::time::Instant,
-        mut data_cb: impl FnMut(Bytes),
+        now: std::time::Instant,
+        mut data_cb: impl FnMut(Bytes, TransportAddress),
     ) -> Option<std::time::Instant> {
-        let next_tick = None;
+        let mut next_tick = None;
 
-        while let Ok((_port, chunk)) = self.receiver.try_recv() {
-            // TODO handle packet
-            match chunk {
-                Chunk::Data(data) => {
-                    data_cb(data.buf);
-                }
-                _ => {
-                    todo!()
+        while let Ok(update) = self.receiver.try_recv() {
+            match update {
+                SendToAssoc::_PrimaryPathChanged(addr) => self.primary_path = addr,
+                SendToAssoc::Chunk(chunk) => {
+                    let chunk_tick = self.handle_chunk(chunk, now);
+                    next_tick = merge_ticks(next_tick, chunk_tick);
                 }
             }
         }
 
+        self.check_out_queue(&mut data_cb);
+
         next_tick
     }
+
+    fn handle_chunk(
+        &mut self,
+        chunk: Chunk,
+        _now: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        match chunk {
+            Chunk::Data(data) => {
+                self.in_queue.push_back(data);
+            }
+            _ => {
+                todo!()
+            }
+        }
+        None
+    }
+
+    fn check_out_queue(&mut self, data_cb: &mut impl FnMut(Bytes, TransportAddress)) {
+        let mut buf = BytesMut::new();
+        for data in self.out_queue.drain(..) {
+            buf.put_slice(&data.buf);
+        }
+        data_cb(buf.freeze(), self.primary_path);
+    }
+}
+
+fn merge_ticks(
+    current: Option<std::time::Instant>,
+    new: Option<std::time::Instant>,
+) -> Option<std::time::Instant> {
+    let Some(current) = current else {
+        return new;
+    };
+    let Some(new) = new else {
+        return Some(current);
+    };
+    Some(std::time::Instant::min(current, new))
 }
