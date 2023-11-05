@@ -75,7 +75,7 @@ where
         }
 
         // Either we have accepted a new association here
-        let new_assoc_id = self.handle_cookie_echo(&packet, &mut data, from);
+        let new_assoc_id = self.handle_cookie_echo(&packet, &mut data, from, &mut send_data);
 
         // Or we need to look the ID up via the aliases
         let assoc_id = new_assoc_id.or_else(|| {
@@ -168,6 +168,7 @@ where
         packet: &Packet,
         data: &mut Bytes,
         from: TransportAddress,
+        mut send_data: impl FnMut(Bytes, TransportAddress),
     ) -> Option<AssocId> {
         if !Chunk::is_cookie_echo(&data) {
             return None;
@@ -178,6 +179,11 @@ where
         if let ChunkKind::StateCookie(addrs) = chunk.into_kind() {
             data.advance(size);
             let assoc_id = self.make_new_assoc(packet, addrs, from);
+            // TODO serialize this
+            let _ = packet.to();
+            let _cookie_ack = ChunkKind::StateCookieAck;
+            let buf = Bytes::from(vec![0, 0, 0, 0]);
+            send_data(buf, from);
             Some(assoc_id)
         } else {
             None
