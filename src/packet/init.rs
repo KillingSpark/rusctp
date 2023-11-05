@@ -1,4 +1,4 @@
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
     cookie::{self, StateCookie},
@@ -94,5 +94,27 @@ impl InitAck {
             ecn_capable: None,
             supported_addr_types: None,
         })
+    }
+
+    pub fn serialize(&self, buf: &mut impl BufMut) {
+        // header
+        buf.put_u8(2);
+        buf.put_u8(0);
+        let serialized_cookie_size = self.cookie.serialized_size() as u16;
+        buf.put_u16(4 + 16 + 4 + serialized_cookie_size);
+
+        // value
+        buf.put_u32(self.initiate_tag);
+        buf.put_u32(self.a_rwnd);
+        buf.put_u16(self.outbound_streams);
+        buf.put_u16(self.inbound_streams);
+        buf.put_u32(self.initial_tsn);
+
+        // cookie
+        buf.put_u16(7);
+        buf.put_u16(serialized_cookie_size);
+        self.cookie.serialize(buf);
+
+        // TODO params
     }
 }

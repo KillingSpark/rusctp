@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::hash::Hasher;
 
+use bytes::BufMut;
 use bytes::Bytes;
 
 use crate::TransportAddress;
@@ -31,6 +32,14 @@ impl StateCookie {
     }
 
     pub fn parse(_data: Bytes) -> Option<Self> {
+        todo!()
+    }
+
+    pub fn serialize(&self, _buf: &mut impl BufMut) -> usize {
+        todo!()
+    }
+
+    pub fn serialized_size(&self) -> usize {
         todo!()
     }
 }
