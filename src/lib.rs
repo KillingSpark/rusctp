@@ -169,13 +169,13 @@ where
         data: &mut Bytes,
         from: TransportAddress,
     ) -> Option<AssocId> {
-        if !Chunk::is_cookie_ack(&data) {
+        if !Chunk::is_cookie_echo(&data) {
             return None;
         }
         let (size, Ok(chunk)) = Chunk::parse(&data) else {
             return None;
         };
-        if let ChunkKind::StateCookieAck(addrs) = chunk.into_kind() {
+        if let ChunkKind::StateCookie(addrs) = chunk.into_kind() {
             data.advance(size);
             let assoc_id = self.make_new_assoc(packet, addrs, from);
             Some(assoc_id)

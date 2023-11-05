@@ -60,8 +60,8 @@ pub enum ChunkKind {
     ShutDown,
     ShutDownAck,
     OpError,
-    StateCookie,
-    StateCookieAck(StateCookieAck),
+    StateCookie(StateCookieAck),
+    StateCookieAck,
     _ReservedECNE,
     _ReservedCWR,
     ShutDownComplete,
@@ -103,11 +103,11 @@ impl Chunk {
         }
     }
 
-    pub fn is_cookie_ack(data: &[u8]) -> bool {
+    pub fn is_cookie_echo(data: &[u8]) -> bool {
         if data.len() < CHUNK_HEADER_SIZE {
             false
         } else {
-            data[0] == 11
+            data[0] == 10
         }
     }
 
@@ -135,8 +135,8 @@ impl Chunk {
             7 => ChunkKind::ShutDown,
             8 => ChunkKind::ShutDownAck,
             9 => ChunkKind::OpError,
-            10 => ChunkKind::StateCookie,
-            11 => ChunkKind::StateCookieAck(StateCookieAck { aliases: vec![] }),
+            10 => ChunkKind::StateCookie(StateCookieAck { aliases: vec![] }),
+            11 => ChunkKind::StateCookieAck,
             12 => ChunkKind::_ReservedECNE,
             13 => ChunkKind::_ReservedCWR,
             14 => ChunkKind::ShutDownComplete,
