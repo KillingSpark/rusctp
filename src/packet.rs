@@ -1,8 +1,14 @@
-use std::hash::Hasher;
-
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::TransportAddress;
+
+use self::{
+    cookie::StateCookie,
+    init::{InitAck, InitChunk},
+};
+
+pub mod cookie;
+pub mod init;
 
 pub struct Packet {
     from: u16,
@@ -48,8 +54,8 @@ impl Packet {
 
 pub enum Chunk {
     Data(DataSegment),
-    Init(InitChunk),
-    InitAck(InitChunk, StateCookie),
+    Init(init::InitChunk),
+    InitAck(init::InitAck),
     SAck,
     HeartBeat,
     HeartBeatAck,
@@ -57,60 +63,31 @@ pub enum Chunk {
     ShutDown,
     ShutDownAck,
     OpError,
-    StateCookie(StateCookie),
+    StateCookie(cookie::StateCookie),
     StateCookieAck,
     _ReservedECNE,
     _ReservedCWR,
     ShutDownComplete,
 }
 
+pub struct UnrecognizedParam {
+    pub typ: u8,
+}
+
 pub struct DataSegment {
     pub(crate) buf: Bytes,
 }
 
-pub enum UnrecognizedChunkReaction {
-    Stop { report: bool },
-    Skip { report: bool },
+pub enum ParseError {
+    Unrecognized { report: bool, stop: bool },
+    IllegalFormat,
+    Done,
 }
 
-impl UnrecognizedChunkReaction {
-    pub fn report(&self) -> bool {
-        match self {
-            Self::Skip { report } => *report,
-            Self::Stop { report } => *report,
-        }
-    }
-}
-
-pub struct InitChunk {
-    pub aliases: Vec<TransportAddress>,
-}
-
-pub struct StateCookie {
-    pub init_address: TransportAddress,
-    pub aliases: Vec<TransportAddress>,
-    pub peer_port: u16,
-    pub local_port: u16,
-    pub mac: u64,
-}
-
-impl StateCookie {
-    pub fn calc_mac(
-        init_address: TransportAddress,
-        aliases: &[TransportAddress],
-        peer_port: u16,
-        local_port: u16,
-        local_secret: &[u8],
-    ) -> u64 {
-        use std::hash::Hash;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        init_address.hash(&mut hasher);
-        aliases.hash(&mut hasher);
-        peer_port.hash(&mut hasher);
-        local_port.hash(&mut hasher);
-        hasher.write(local_secret);
-        hasher.finish()
-    }
+pub enum SupportedAddrTypes {
+    IpV4,
+    IpV6,
+    IpV4and6,
 }
 
 static COOKIE_ACK_BYTES: &[u8] = &[11, 0, 0, 4];
@@ -133,32 +110,31 @@ impl Chunk {
         }
     }
 
-    pub fn parse(data: &Bytes) -> (usize, Result<Self, UnrecognizedChunkReaction>) {
+    pub fn parse(data: &Bytes) -> (usize, Result<Self, ParseError>) {
         if data.len() < CHUNK_HEADER_SIZE {
-            return (
-                data.len(),
-                Err(UnrecognizedChunkReaction::Stop { report: false }),
-            );
+            return (data.len(), Err(ParseError::Done));
         }
         let typ = data[0];
         let _flags = data[1];
         let len = u16::from_be_bytes(data[2..4].try_into().expect("This range is checked above"));
+        let len = len as usize;
 
-        let value = data.slice(CHUNK_HEADER_SIZE..);
+        let value = data.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + len);
 
         let chunk = match typ {
             0 => Chunk::Data(DataSegment { buf: value }),
-            1 => Chunk::Init(InitChunk { aliases: vec![] }),
-            2 => Chunk::InitAck(
-                InitChunk { aliases: vec![] },
-                StateCookie {
-                    aliases: vec![],
-                    init_address: TransportAddress::Fake(100),
-                    peer_port: 10,
-                    local_port: 10,
-                    mac: 100,
-                },
-            ),
+            1 => {
+                let Some(init) = InitChunk::parse(value) else {
+                    return (len, Err(ParseError::IllegalFormat));
+                };
+                Chunk::Init(init)
+            }
+            2 => {
+                let Some(init) = InitAck::parse(value) else {
+                    return (len, Err(ParseError::IllegalFormat));
+                };
+                Chunk::InitAck(init)
+            }
             3 => Chunk::SAck,
             4 => Chunk::HeartBeat,
             5 => Chunk::HeartBeatAck,
@@ -180,32 +156,44 @@ impl Chunk {
             _ => match typ >> 6 {
                 0 => {
                     return (
-                        len as usize,
-                        Err(UnrecognizedChunkReaction::Stop { report: false }),
+                        len,
+                        Err(ParseError::Unrecognized {
+                            stop: true,
+                            report: false,
+                        }),
                     )
                 }
                 1 => {
                     return (
-                        len as usize,
-                        Err(UnrecognizedChunkReaction::Stop { report: true }),
+                        len,
+                        Err(ParseError::Unrecognized {
+                            stop: true,
+                            report: true,
+                        }),
                     )
                 }
                 2 => {
                     return (
-                        len as usize,
-                        Err(UnrecognizedChunkReaction::Skip { report: false }),
+                        len,
+                        Err(ParseError::Unrecognized {
+                            stop: false,
+                            report: false,
+                        }),
                     )
                 }
                 3 => {
                     return (
-                        len as usize,
-                        Err(UnrecognizedChunkReaction::Skip { report: true }),
+                        len,
+                        Err(ParseError::Unrecognized {
+                            stop: true,
+                            report: true,
+                        }),
                     )
                 }
                 _ => unreachable!("This can onlyy have 4 values"),
             },
         };
-        (len as usize, Ok(chunk))
+        (len, Ok(chunk))
     }
 
     pub fn serialize(&self, buf: &mut BytesMut) {

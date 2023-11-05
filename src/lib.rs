@@ -4,6 +4,7 @@ pub use packet::*;
 
 mod assoc;
 use assoc::Association;
+use packet::{cookie::StateCookie, init::InitAck};
 
 use std::{
     collections::{BinaryHeap, HashMap},
@@ -124,12 +125,18 @@ where
                         self.assocs_need_tick.push(assoc_id)
                     }
                 }
-                Err(UnrecognizedChunkReaction::Skip { report: _ }) => {
+                Err(ParseError::Unrecognized { stop, report: _ }) => {
                     // TODO report if necessary
-                    continue;
+                    if stop {
+                        break;
+                    } else {
+                        continue;
+                    }
                 }
-                Err(UnrecognizedChunkReaction::Stop { report: _ }) => {
-                    // TODO report if necessary
+                Err(ParseError::Done) => {
+                    break;
+                }
+                Err(ParseError::IllegalFormat) => {
                     break;
                 }
             }
@@ -165,16 +172,14 @@ where
                 packet.to(),
                 &self.cookie_secret,
             );
-            let init_ack = Chunk::InitAck(
-                self.create_init_chunk(),
-                StateCookie {
-                    init_address: from,
-                    aliases: init.aliases,
-                    peer_port: packet.from(),
-                    local_port: packet.to(),
-                    mac,
-                },
-            );
+            let cookie = StateCookie {
+                init_address: from,
+                aliases: init.aliases,
+                peer_port: packet.from(),
+                local_port: packet.to(),
+                mac,
+            };
+            let init_ack = Chunk::InitAck(self.create_init_ack(cookie));
             let mut buf = BytesMut::new();
             // TODO put packet header here
             init_ack.serialize(&mut buf);
@@ -186,7 +191,7 @@ where
         }
     }
 
-    fn create_init_chunk(&self) -> InitChunk {
+    fn create_init_ack(&self, _cookie: StateCookie) -> InitAck {
         unimplemented!()
     }
 
