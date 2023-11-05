@@ -72,7 +72,13 @@ impl Association {
     }
 
     fn check_out_queue(&mut self, data_cb: &mut impl FnMut(Bytes, TransportAddress)) {
-        let mut buf = BytesMut::new();
+        let data_bytes = self
+            .out_queue
+            .iter()
+            .map(|buf| buf.buf.len())
+            .sum::<usize>();
+
+        let mut buf = BytesMut::with_capacity(data_bytes);
         for data in self.out_queue.drain(..) {
             buf.put_slice(&data.buf);
         }

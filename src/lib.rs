@@ -226,11 +226,7 @@ where
         }
     }
 
-    fn make_new_assoc(
-        &mut self,
-        packet: &Packet,
-        state_cookie: StateCookie,
-    ) -> AssocId {
+    fn make_new_assoc(&mut self, packet: &Packet, state_cookie: StateCookie) -> AssocId {
         let (sender, receiver) = std::sync::mpsc::channel();
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
@@ -251,7 +247,11 @@ where
             alias.peer_addr = alias_addr;
             self.aliases.insert(alias, assoc_id);
         }
-        (self.new_assoc_cb)(Association::new(assoc_id, receiver, state_cookie.init_address));
+        (self.new_assoc_cb)(Association::new(
+            assoc_id,
+            receiver,
+            state_cookie.init_address,
+        ));
         assoc_id
     }
 
