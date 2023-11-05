@@ -113,7 +113,7 @@ impl StateCookie {
     }
 }
 
-static COOKIE_ACK_BYTES: &'static [u8] = &[11, 0, 0, 4];
+static COOKIE_ACK_BYTES: &[u8] = &[11, 0, 0, 4];
 
 const CHUNK_HEADER_SIZE: usize = 4;
 impl Chunk {

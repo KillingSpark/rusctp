@@ -140,7 +140,7 @@ where
         from: TransportAddress,
         mut send_data: impl FnMut(Bytes, TransportAddress),
     ) -> bool {
-        if !Chunk::is_init(&data) {
+        if !Chunk::is_init(data) {
             return false;
         }
         let (size, Ok(chunk)) = Chunk::parse(data) else {
@@ -193,10 +193,10 @@ where
         from: TransportAddress,
         mut send_data: impl FnMut(Bytes, TransportAddress),
     ) -> Option<AssocId> {
-        if !Chunk::is_cookie_echo(&data) {
+        if !Chunk::is_cookie_echo(data) {
             return None;
         }
-        let (size, Ok(chunk)) = Chunk::parse(&data) else {
+        let (size, Ok(chunk)) = Chunk::parse(data) else {
             return None;
         };
         if let Chunk::StateCookie(cookie) = chunk {
@@ -208,7 +208,7 @@ where
                 &self.cookie_secret,
             );
 
-            if !calced_mac == cookie.mac {
+            if calced_mac != cookie.mac {
                 // TODO maybe bail more drastically?
                 return None;
             }
@@ -233,7 +233,7 @@ where
         self.assoc_infos.insert(
             assoc_id,
             PerAssocInfo {
-                sender: sender,
+                sender,
                 verification_tag: packet.verification_tag(),
             },
         );
