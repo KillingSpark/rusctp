@@ -3,7 +3,7 @@ use std::sync::mpsc::Receiver;
 use bytes::Bytes;
 
 use crate::packet::Chunk;
-use crate::{ChunkKind, AssocId};
+use crate::AssocId;
 
 pub struct Association {
     id: AssocId,
@@ -28,8 +28,8 @@ impl Association {
 
         while let Ok((_port, chunk)) = self.receiver.try_recv() {
             // TODO handle packet
-            match chunk.into_kind() {
-                ChunkKind::Data(data) => {
+            match chunk {
+                Chunk::Data(data) => {
                     data_cb(data.buf);
                 }
                 _ => {

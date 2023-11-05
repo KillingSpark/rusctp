@@ -1,3 +1,5 @@
+use std::hash::Hasher;
+
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::TransportAddress;
@@ -44,15 +46,10 @@ impl Packet {
     }
 }
 
-pub struct Chunk {
-    flags: u8,
-    kind: ChunkKind,
-}
-
-pub enum ChunkKind {
+pub enum Chunk {
     Data(DataSegment),
     Init(InitChunk),
-    InitAck,
+    InitAck(InitChunk, StateCookie),
     SAck,
     HeartBeat,
     HeartBeatAck,
@@ -90,7 +87,28 @@ pub struct InitChunk {
 }
 
 pub struct StateCookie {
+    pub init_address: TransportAddress,
     pub aliases: Vec<TransportAddress>,
+    pub peer_port: u16,
+    pub local_port: u16,
+    pub mac: u64,
+}
+
+impl StateCookie {
+    pub fn calc_mac(
+        init_address: TransportAddress,
+        aliases: &[TransportAddress],
+        peer_port: u16,
+        local_port: u16,
+    ) -> u64 {
+        use std::hash::Hash;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        init_address.hash(&mut hasher);
+        aliases.hash(&mut hasher);
+        peer_port.hash(&mut hasher);
+        local_port.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 static COOKIE_ACK_BYTES: &'static [u8] = &[11, 0, 0, 4];
@@ -121,27 +139,42 @@ impl Chunk {
             );
         }
         let typ = data[0];
-        let flags = data[1];
+        let _flags = data[1];
         let len = u16::from_be_bytes(data[2..4].try_into().expect("This range is checked above"));
 
         let value = data.slice(CHUNK_HEADER_SIZE..);
 
-        let kind = match typ {
-            0 => ChunkKind::Data(DataSegment { buf: value }),
-            1 => ChunkKind::Init(InitChunk { aliases: vec![] }),
-            2 => ChunkKind::InitAck,
-            3 => ChunkKind::SAck,
-            4 => ChunkKind::HeartBeat,
-            5 => ChunkKind::HeartBeatAck,
-            6 => ChunkKind::Abort,
-            7 => ChunkKind::ShutDown,
-            8 => ChunkKind::ShutDownAck,
-            9 => ChunkKind::OpError,
-            10 => ChunkKind::StateCookie(StateCookie { aliases: vec![] }),
-            11 => ChunkKind::StateCookieAck,
-            12 => ChunkKind::_ReservedECNE,
-            13 => ChunkKind::_ReservedCWR,
-            14 => ChunkKind::ShutDownComplete,
+        let chunk = match typ {
+            0 => Chunk::Data(DataSegment { buf: value }),
+            1 => Chunk::Init(InitChunk { aliases: vec![] }),
+            2 => Chunk::InitAck(
+                InitChunk { aliases: vec![] },
+                StateCookie {
+                    aliases: vec![],
+                    init_address: TransportAddress::Fake(100),
+                    peer_port: 10,
+                    local_port: 10,
+                    mac: 100,
+                },
+            ),
+            3 => Chunk::SAck,
+            4 => Chunk::HeartBeat,
+            5 => Chunk::HeartBeatAck,
+            6 => Chunk::Abort,
+            7 => Chunk::ShutDown,
+            8 => Chunk::ShutDownAck,
+            9 => Chunk::OpError,
+            10 => Chunk::StateCookie(StateCookie {
+                aliases: vec![],
+                init_address: TransportAddress::Fake(100),
+                peer_port: 10,
+                local_port: 10,
+                mac: 100,
+            }),
+            11 => Chunk::StateCookieAck,
+            12 => Chunk::_ReservedECNE,
+            13 => Chunk::_ReservedCWR,
+            14 => Chunk::ShutDownComplete,
             _ => match typ >> 6 {
                 0 => {
                     return (
@@ -170,29 +203,17 @@ impl Chunk {
                 _ => unreachable!("This can onlyy have 4 values"),
             },
         };
-        (len as usize, Ok(Chunk { flags, kind }))
+        (len as usize, Ok(chunk))
     }
 
     pub fn serialize(&self, buf: &mut BytesMut) {
-        match self.kind {
-            ChunkKind::StateCookieAck => buf.put_slice(COOKIE_ACK_BYTES),
+        match self {
+            Chunk::StateCookieAck => buf.put_slice(COOKIE_ACK_BYTES),
             _ => unimplemented!(),
         }
     }
 
     pub fn cookie_ack_bytes() -> Bytes {
         Bytes::from_static(COOKIE_ACK_BYTES)
-    }
-
-    pub fn kind(&self) -> &ChunkKind {
-        &self.kind
-    }
-
-    pub fn flags(&self) -> u8 {
-        self.flags
-    }
-
-    pub fn into_kind(self) -> ChunkKind {
-        self.kind
     }
 }

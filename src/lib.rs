@@ -1,5 +1,5 @@
 mod packet;
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
 pub use packet::*;
 
 mod assoc;
@@ -107,7 +107,7 @@ where
 
             match chunk {
                 Ok(chunk) => {
-                    if let ChunkKind::Init(_) = chunk.kind() {
+                    if let Chunk::Init(_) = chunk {
                         // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
                     } else {
                         if let Err(_err) = assoc_info.sender.send((assoc_id, chunk)) {
@@ -145,22 +145,36 @@ where
             // Handling this correctly is done in process_chunks.
             return false;
         };
-        if let ChunkKind::Init(_init) = chunk.into_kind() {
+        if let Chunk::Init(init) = chunk {
             if size != data.len() {
                 // This is illegal, the init needs to be the only chunk in the packet
                 // -> stop processing this
                 return true;
             }
-            // TODO serialize this
-            let _ = packet.to();
-            let _init_ack = ChunkKind::InitAck;
-            let buf = Bytes::from(vec![0, 0, 0, 0]);
-            send_data(buf, from);
+            let mac = StateCookie::calc_mac(from, &init.aliases, packet.from(), packet.to());
+            let init_ack = Chunk::InitAck(
+                self.create_init_chunk(),
+                StateCookie {
+                    init_address: from,
+                    aliases: init.aliases,
+                    peer_port: packet.from(),
+                    local_port: packet.to(),
+                    mac,
+                },
+            );
+            let mut buf = BytesMut::new();
+            // TODO put packet header here
+            init_ack.serialize(&mut buf);
+            send_data(buf.freeze(), from);
             // handled the init correctly, no need to process the packet any further
             true
         } else {
             unreachable!("We checked above that this is an init chunk")
         }
+    }
+
+    fn create_init_chunk(&self) -> InitChunk {
+        unimplemented!()
     }
 
     fn handle_cookie_echo(
@@ -176,9 +190,21 @@ where
         let (size, Ok(chunk)) = Chunk::parse(&data) else {
             return None;
         };
-        if let ChunkKind::StateCookie(addrs) = chunk.into_kind() {
+        if let Chunk::StateCookie(cookie) = chunk {
+            let calced_mac = StateCookie::calc_mac(
+                cookie.init_address,
+                &cookie.aliases,
+                cookie.peer_port,
+                cookie.local_port,
+            );
+
+            if !calced_mac == cookie.mac {
+                // TODO maybe bail more drastically?
+                return None;
+            }
+
             data.advance(size);
-            let assoc_id = self.make_new_assoc(packet, addrs, from);
+            let assoc_id = self.make_new_assoc(packet, cookie, from);
             send_data(Chunk::cookie_ack_bytes(), from);
             Some(assoc_id)
         } else {
