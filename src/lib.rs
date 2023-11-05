@@ -19,7 +19,10 @@ pub enum TransportAddress {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AssocId {
+pub struct AssocId(u64);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AssocAlias {
     peer_addr: TransportAddress,
     peer_port: u16,
     local_port: u16,
@@ -34,9 +37,10 @@ pub struct Sctp<AssocCb>
 where
     AssocCb: FnMut(Association, TransportAddress),
 {
+    assoc_id_gen: u64,
     new_assoc_cb: AssocCb,
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
-    aliases: HashMap<AssocId, AssocId>,
+    aliases: HashMap<AssocAlias, AssocId>,
     assocs_need_tick: BinaryHeap<AssocId>,
 }
 
@@ -46,6 +50,7 @@ where
 {
     pub fn new(assoc_cb: AssocCb) -> Self {
         Self {
+            assoc_id_gen: 1,
             new_assoc_cb: assoc_cb,
             assoc_infos: HashMap::new(),
             aliases: HashMap::new(),
@@ -59,21 +64,19 @@ where
         };
         data.advance(12);
 
-        if self.handle_init(&packet, &data, from) {
+        if self.handle_init(&packet, &data, from).is_some() {
             return;
         }
 
-        let assoc_id = AssocId {
+        let alias = AssocAlias {
             peer_addr: from,
             peer_port: packet.from(),
             local_port: packet.to(),
         };
-        // Either we find the association by this ID or we need to take an indirection through the alias table
-        let Some(assoc_info) = self.assoc_infos.get(&assoc_id).or_else(|| {
-            self.aliases
-                .get(&assoc_id)
-                .and_then(|dealiased_id| self.assoc_infos.get(dealiased_id))
-        }) else {
+        let Some(assoc_id) = self.aliases.get(&alias).copied() else {
+            return;
+        };
+        let Some(assoc_info) = self.assoc_infos.get(&assoc_id) else {
             return;
         };
         if assoc_info.verification_tag != packet.verification_tag() {
@@ -108,30 +111,31 @@ where
         }
     }
 
-    fn handle_init(&mut self, packet: &Packet, data: &Bytes, from: TransportAddress) -> bool {
+    fn handle_init(
+        &mut self,
+        packet: &Packet,
+        data: &Bytes,
+        from: TransportAddress,
+    ) -> Option<AssocId> {
         let (_size, Ok(chunk)) = Chunk::parse(data) else {
-            return false;
+            return None;
         };
         // TODO make sure size and data.len() match
         if let ChunkKind::Init(addrs) = chunk.into_kind() {
-            self.make_new_assoc(packet, addrs, from);
-            true
+            Some(self.make_new_assoc(packet, addrs, from))
         } else {
-            false
+            None
         }
     }
 
-    pub fn assocs_need_tick(&self) -> impl Iterator<Item = AssocId> + '_ {
-        self.assocs_need_tick.iter().copied()
-    }
-
-    fn make_new_assoc(&mut self, packet: &Packet, init: InitChunk, from: TransportAddress) {
+    fn make_new_assoc(
+        &mut self,
+        packet: &Packet,
+        init: InitChunk,
+        from: TransportAddress,
+    ) -> AssocId {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let assoc_id = AssocId {
-            peer_addr: from,
-            peer_port: packet.from(),
-            local_port: packet.to(),
-        };
+        let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
             assoc_id,
             PerAssocInfo {
@@ -139,11 +143,27 @@ where
                 verification_tag: packet.verification_tag(),
             },
         );
-        for alias in init.aliases {
-            let mut alias_id = assoc_id;
-            alias_id.peer_addr = alias;
-            self.aliases.insert(alias_id, assoc_id);
+        let original_alias = AssocAlias {
+            peer_addr: from,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+        };
+        self.aliases.insert(original_alias, assoc_id);
+        for alias_addr in init.aliases {
+            let mut alias = original_alias;
+            alias.peer_addr = alias_addr;
+            self.aliases.insert(alias, assoc_id);
         }
-        (self.new_assoc_cb)(Association::new(assoc_id, receiver), from)
+        (self.new_assoc_cb)(Association::new(assoc_id, receiver), from);
+        assoc_id
+    }
+
+    fn next_assoc_id(&mut self) -> AssocId {
+        self.assoc_id_gen += 1;
+        AssocId(self.assoc_id_gen)
+    }
+
+    pub fn assocs_need_tick(&self) -> impl Iterator<Item = AssocId> + '_ {
+        self.assocs_need_tick.iter().copied()
     }
 }
