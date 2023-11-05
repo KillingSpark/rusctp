@@ -58,24 +58,42 @@ where
         }
     }
 
-    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress) {
+    pub fn receive_data(
+        &mut self,
+        mut data: Bytes,
+        from: TransportAddress,
+        mut send_data: impl FnMut(Bytes, TransportAddress),
+    ) {
         let Some(packet) = Packet::parse(&data) else {
             return;
         };
         data.advance(12);
 
-        if self.handle_init(&packet, &data, from).is_some() {
+        // If we get an init chunk we only send the init ack and return immediatly
+        if self.handle_init(&packet, &data, from, &mut send_data) {
             return;
         }
 
-        let alias = AssocAlias {
-            peer_addr: from,
-            peer_port: packet.from(),
-            local_port: packet.to(),
-        };
-        let Some(assoc_id) = self.aliases.get(&alias).copied() else {
+        // Either we have accepted a new association here
+        let new_assoc_id = self.handle_cookie_echo(&packet, &mut data, from);
+
+        // Or we need to look the ID up via the aliases
+        let assoc_id = new_assoc_id.or_else(|| {
+            let alias = AssocAlias {
+                peer_addr: from,
+                peer_port: packet.from(),
+                local_port: packet.to(),
+            };
+            self.aliases.get(&alias).copied()
+        });
+
+        let Some(assoc_id) = assoc_id else {
             return;
         };
+        self.process_chunks(assoc_id, &packet, data);
+    }
+
+    fn process_chunks(&mut self, assoc_id: AssocId, packet: &Packet, mut data: Bytes) {
         let Some(assoc_info) = self.assoc_infos.get(&assoc_id) else {
             return;
         };
@@ -111,18 +129,56 @@ where
         }
     }
 
+    /// Returns true if the packet should not be processed further
     fn handle_init(
         &mut self,
         packet: &Packet,
         data: &Bytes,
         from: TransportAddress,
+        mut send_data: impl FnMut(Bytes, TransportAddress),
+    ) -> bool {
+        if !Chunk::is_init(&data) {
+            return false;
+        }
+        let (size, Ok(chunk)) = Chunk::parse(data) else {
+            // Does not parse correctly. 
+            // Handling this correctly is done in process_chunks.
+            return false;
+        };
+        if let ChunkKind::Init(_init) = chunk.into_kind() {
+            if size != data.len() {
+                // This is illegal, the init needs to be the only chunk in the packet
+                // -> stop processing this
+                return true;
+            }
+            // TODO serialize this
+            let _ = packet.to();
+            let _init_ack = ChunkKind::InitAck;
+            let buf = Bytes::from(vec![0, 0, 0, 0]);
+            send_data(buf, from);
+            // handled the init correctly, no need to process the packet any further
+            true
+        } else {
+            unreachable!("We checked above that this is an init chunk")
+        }
+    }
+
+    fn handle_cookie_echo(
+        &mut self,
+        packet: &Packet,
+        data: &mut Bytes,
+        from: TransportAddress,
     ) -> Option<AssocId> {
-        let (_size, Ok(chunk)) = Chunk::parse(data) else {
+        if !Chunk::is_cookie_ack(&data) {
+            return None;
+        }
+        let (size, Ok(chunk)) = Chunk::parse(&data) else {
             return None;
         };
-        // TODO make sure size and data.len() match
-        if let ChunkKind::Init(addrs) = chunk.into_kind() {
-            Some(self.make_new_assoc(packet, addrs, from))
+        if let ChunkKind::StateCookieAck(addrs) = chunk.into_kind() {
+            data.advance(size);
+            let assoc_id = self.make_new_assoc(packet, addrs, from);
+            Some(assoc_id)
         } else {
             None
         }
@@ -131,7 +187,7 @@ where
     fn make_new_assoc(
         &mut self,
         packet: &Packet,
-        init: InitChunk,
+        init: StateCookieAck,
         from: TransportAddress,
     ) -> AssocId {
         let (sender, receiver) = std::sync::mpsc::channel();

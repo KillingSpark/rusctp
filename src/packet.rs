@@ -61,7 +61,7 @@ pub enum ChunkKind {
     ShutDownAck,
     OpError,
     StateCookie,
-    StateCookieAck,
+    StateCookieAck(StateCookieAck),
     _ReservedECNE,
     _ReservedCWR,
     ShutDownComplete,
@@ -89,9 +89,29 @@ pub struct InitChunk {
     pub aliases: Vec<TransportAddress>,
 }
 
+pub struct StateCookieAck {
+    pub aliases: Vec<TransportAddress>,
+}
+
+const CHUNK_HEADER_SIZE: usize = 4;
 impl Chunk {
+    pub fn is_init(data: &[u8]) -> bool {
+        if data.len() < CHUNK_HEADER_SIZE {
+            false
+        } else {
+            data[0] == 1
+        }
+    }
+
+    pub fn is_cookie_ack(data: &[u8]) -> bool {
+        if data.len() < CHUNK_HEADER_SIZE {
+            false
+        } else {
+            data[0] == 11
+        }
+    }
+
     pub fn parse(data: &Bytes) -> (usize, Result<Self, UnrecognizedChunkReaction>) {
-        const CHUNK_HEADER_SIZE: usize = 4;
         if data.len() < CHUNK_HEADER_SIZE {
             return (
                 data.len(),
@@ -116,7 +136,7 @@ impl Chunk {
             8 => ChunkKind::ShutDownAck,
             9 => ChunkKind::OpError,
             10 => ChunkKind::StateCookie,
-            11 => ChunkKind::StateCookieAck,
+            11 => ChunkKind::StateCookieAck(StateCookieAck { aliases: vec![] }),
             12 => ChunkKind::_ReservedECNE,
             13 => ChunkKind::_ReservedCWR,
             14 => ChunkKind::ShutDownComplete,
