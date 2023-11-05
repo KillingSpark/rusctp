@@ -100,6 +100,7 @@ impl StateCookie {
         aliases: &[TransportAddress],
         peer_port: u16,
         local_port: u16,
+        local_secret: &[u8],
     ) -> u64 {
         use std::hash::Hash;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -107,6 +108,7 @@ impl StateCookie {
         aliases.hash(&mut hasher);
         peer_port.hash(&mut hasher);
         local_port.hash(&mut hasher);
+        hasher.write(local_secret);
         hasher.finish()
     }
 }

@@ -42,6 +42,8 @@ where
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
     aliases: HashMap<AssocAlias, AssocId>,
     assocs_need_tick: BinaryHeap<AssocId>,
+
+    cookie_secret: Vec<u8>,
 }
 
 impl<AssocCb> Sctp<AssocCb>
@@ -55,6 +57,7 @@ where
             assoc_infos: HashMap::new(),
             aliases: HashMap::new(),
             assocs_need_tick: BinaryHeap::new(),
+            cookie_secret: vec![1, 2, 3, 4], // TODO
         }
     }
 
@@ -151,7 +154,13 @@ where
                 // -> stop processing this
                 return true;
             }
-            let mac = StateCookie::calc_mac(from, &init.aliases, packet.from(), packet.to());
+            let mac = StateCookie::calc_mac(
+                from,
+                &init.aliases,
+                packet.from(),
+                packet.to(),
+                &self.cookie_secret,
+            );
             let init_ack = Chunk::InitAck(
                 self.create_init_chunk(),
                 StateCookie {
@@ -196,6 +205,7 @@ where
                 &cookie.aliases,
                 cookie.peer_port,
                 cookie.local_port,
+                &self.cookie_secret,
             );
 
             if !calced_mac == cookie.mac {
