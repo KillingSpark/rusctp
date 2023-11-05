@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::TransportAddress;
 
@@ -60,7 +60,7 @@ pub enum ChunkKind {
     ShutDown,
     ShutDownAck,
     OpError,
-    StateCookie(StateCookieAck),
+    StateCookie(StateCookie),
     StateCookieAck,
     _ReservedECNE,
     _ReservedCWR,
@@ -89,9 +89,11 @@ pub struct InitChunk {
     pub aliases: Vec<TransportAddress>,
 }
 
-pub struct StateCookieAck {
+pub struct StateCookie {
     pub aliases: Vec<TransportAddress>,
 }
+
+static COOKIE_ACK_BYTES: &'static [u8] = &[11, 0, 0, 4];
 
 const CHUNK_HEADER_SIZE: usize = 4;
 impl Chunk {
@@ -135,7 +137,7 @@ impl Chunk {
             7 => ChunkKind::ShutDown,
             8 => ChunkKind::ShutDownAck,
             9 => ChunkKind::OpError,
-            10 => ChunkKind::StateCookie(StateCookieAck { aliases: vec![] }),
+            10 => ChunkKind::StateCookie(StateCookie { aliases: vec![] }),
             11 => ChunkKind::StateCookieAck,
             12 => ChunkKind::_ReservedECNE,
             13 => ChunkKind::_ReservedCWR,
@@ -169,6 +171,17 @@ impl Chunk {
             },
         };
         (len as usize, Ok(Chunk { flags, kind }))
+    }
+
+    pub fn serialize(&self, buf: &mut BytesMut) {
+        match self.kind {
+            ChunkKind::StateCookieAck => buf.put_slice(COOKIE_ACK_BYTES),
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn cookie_ack_bytes() -> Bytes {
+        Bytes::from_static(COOKIE_ACK_BYTES)
     }
 
     pub fn kind(&self) -> &ChunkKind {

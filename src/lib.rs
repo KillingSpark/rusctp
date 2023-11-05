@@ -141,7 +141,7 @@ where
             return false;
         }
         let (size, Ok(chunk)) = Chunk::parse(data) else {
-            // Does not parse correctly. 
+            // Does not parse correctly.
             // Handling this correctly is done in process_chunks.
             return false;
         };
@@ -179,11 +179,7 @@ where
         if let ChunkKind::StateCookie(addrs) = chunk.into_kind() {
             data.advance(size);
             let assoc_id = self.make_new_assoc(packet, addrs, from);
-            // TODO serialize this
-            let _ = packet.to();
-            let _cookie_ack = ChunkKind::StateCookieAck;
-            let buf = Bytes::from(vec![0, 0, 0, 0]);
-            send_data(buf, from);
+            send_data(Chunk::cookie_ack_bytes(), from);
             Some(assoc_id)
         } else {
             None
@@ -193,7 +189,7 @@ where
     fn make_new_assoc(
         &mut self,
         packet: &Packet,
-        init: StateCookieAck,
+        state_cookie: StateCookie,
         from: TransportAddress,
     ) -> AssocId {
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -211,7 +207,7 @@ where
             local_port: packet.to(),
         };
         self.aliases.insert(original_alias, assoc_id);
-        for alias_addr in init.aliases {
+        for alias_addr in state_cookie.aliases {
             let mut alias = original_alias;
             alias.peer_addr = alias_addr;
             self.aliases.insert(alias, assoc_id);
