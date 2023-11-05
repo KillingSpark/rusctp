@@ -4,10 +4,12 @@ use crate::TransportAddress;
 
 use self::{
     cookie::StateCookie,
+    data::DataSegment,
     init::{InitAck, InitChunk},
 };
 
 pub mod cookie;
+pub mod data;
 pub mod init;
 
 pub struct Packet {
@@ -74,10 +76,6 @@ pub struct UnrecognizedParam {
     pub typ: u8,
 }
 
-pub struct DataSegment {
-    pub(crate) buf: Bytes,
-}
-
 pub enum ParseError {
     Unrecognized { report: bool, stop: bool },
     IllegalFormat,
@@ -115,14 +113,19 @@ impl Chunk {
             return (data.len(), Err(ParseError::Done));
         }
         let typ = data[0];
-        let _flags = data[1];
+        let flags = data[1];
         let len = u16::from_be_bytes(data[2..4].try_into().expect("This range is checked above"));
         let len = len as usize;
 
         let value = data.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + len);
 
         let chunk = match typ {
-            0 => Chunk::Data(DataSegment { buf: value }),
+            0 => {
+                let Some(data) = DataSegment::parse(flags, value) else {
+                    return (len, Err(ParseError::IllegalFormat));
+                };
+                Chunk::Data(data)
+            }
             1 => {
                 let Some(init) = InitChunk::parse(value) else {
                     return (len, Err(ParseError::IllegalFormat));

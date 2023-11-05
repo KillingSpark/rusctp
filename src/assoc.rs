@@ -3,8 +3,9 @@ use std::sync::mpsc::Receiver;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
+use crate::data::DataSegment;
 use crate::packet::Chunk;
-use crate::{AssocId, DataSegment, SendToAssoc, TransportAddress};
+use crate::{AssocId, SendToAssoc, TransportAddress};
 
 pub struct Association {
     id: AssocId,
