@@ -4,7 +4,10 @@ pub use packet::*;
 
 mod assoc;
 use assoc::Association;
-use packet::{cookie::StateCookie, init::InitAck};
+use packet::{
+    cookie::{Cookie, StateCookie},
+    init::{InitAck, InitChunk},
+};
 
 use std::{
     collections::{BinaryHeap, HashMap},
@@ -48,6 +51,8 @@ where
     aliases: HashMap<AssocAlias, AssocId>,
     assocs_need_tick: BinaryHeap<AssocId>,
 
+    half_open_assocs: HashMap<AssocId, AssocAlias>,
+
     cookie_secret: Vec<u8>,
 }
 
@@ -63,7 +68,47 @@ where
             aliases: HashMap::new(),
             assocs_need_tick: BinaryHeap::new(),
             cookie_secret: vec![1, 2, 3, 4], // TODO
+
+            half_open_assocs: HashMap::new(),
         }
+    }
+
+    pub fn init_association(
+        &mut self,
+        peer_addr: TransportAddress,
+        peer_port: u16,
+        local_port: u16,
+    ) -> AssocId {
+        let init_chunk = Chunk::Init(InitChunk {
+            initiate_tag: 0,
+            a_rwnd: 1500,
+            outbound_streams: 1,
+            inbound_streams: 1,
+            initial_tsn: 1337,
+
+            aliases: vec![],
+            cookie_preservative_msec: None,
+            ecn_capable: None,
+            supported_addr_types: None,
+        });
+
+        let packet = Packet::new(peer_port, local_port, 1337);
+
+        let mut packet_header = BytesMut::with_capacity(12);
+        let mut chunks = BytesMut::with_capacity(init_chunk.serialized_size());
+        init_chunk.serialize(&mut chunks);
+        let chunks = chunks.freeze();
+        packet.serialize(&mut packet_header, &chunks);
+
+        let assoc_id = self.next_assoc_id();
+        let alias = AssocAlias {
+            peer_addr,
+            peer_port,
+            local_port,
+        };
+        self.half_open_assocs.insert(assoc_id, alias);
+        // TODO do something with chunks and packet_header
+        assoc_id
     }
 
     pub fn receive_data(
@@ -84,6 +129,10 @@ where
 
         // Either we have accepted a new association here
         let new_assoc_id = self.handle_cookie_echo(&packet, &mut data, from, &mut send_data);
+
+        // Or we get an ack on an association we initiated
+        let new_assoc_id =
+            new_assoc_id.or_else(|| self.handle_init_ack(&packet, &mut data, from, &mut send_data));
 
         // Or we need to look the ID up via the aliases
         let assoc_id = new_assoc_id.or_else(|| {
@@ -165,20 +214,20 @@ where
                 // -> stop processing this
                 return true;
             }
-            let mac = StateCookie::calc_mac(
+            let mac = Cookie::calc_mac(
                 from,
                 &init.aliases,
                 packet.from(),
                 packet.to(),
                 &self.cookie_secret,
             );
-            let cookie = StateCookie {
+            let cookie = StateCookie::Ours(Cookie {
                 init_address: from,
                 aliases: init.aliases,
                 peer_port: packet.from(),
                 local_port: packet.to(),
                 mac,
-            };
+            });
             let init_ack = Chunk::InitAck(self.create_init_ack(cookie));
             let mut buf = BytesMut::with_capacity(init_ack.serialized_size());
             // TODO put packet header here
@@ -208,30 +257,61 @@ where
         let (size, Ok(chunk)) = Chunk::parse(data) else {
             return None;
         };
-        if let Chunk::StateCookie(cookie) = chunk {
-            let calced_mac = StateCookie::calc_mac(
-                cookie.init_address,
-                &cookie.aliases,
-                cookie.peer_port,
-                cookie.local_port,
-                &self.cookie_secret,
-            );
+        let Chunk::StateCookie(mut cookie) = chunk else {
+            return None;
+        };
+        let Some(cookie) = cookie.make_ours() else {
+            return None;
+        };
 
-            if calced_mac != cookie.mac {
-                // TODO maybe bail more drastically?
-                return None;
-            }
+        let calced_mac = Cookie::calc_mac(
+            cookie.init_address,
+            &cookie.aliases,
+            cookie.peer_port,
+            cookie.local_port,
+            &self.cookie_secret,
+        );
 
+        if calced_mac != cookie.mac {
+            // TODO maybe bail more drastically?
+            return None;
+        }
+
+        data.advance(size);
+        let assoc_id = self.make_new_assoc(packet, cookie.init_address, &cookie.aliases);
+        send_data(Chunk::cookie_ack_bytes(), from);
+        Some(assoc_id)
+    }
+
+    fn handle_init_ack(
+        &mut self,
+        packet: &Packet,
+        data: &mut Bytes,
+        from: TransportAddress,
+        _send_data: impl FnMut(Bytes, TransportAddress),
+    ) -> Option<AssocId> {
+        if !Chunk::is_init_ack(data) {
+            return None;
+        }
+        let (size, Ok(chunk)) = Chunk::parse(data) else {
+            return None;
+        };
+        if let Chunk::InitAck(init_ack) = chunk {
             data.advance(size);
-            let assoc_id = self.make_new_assoc(packet, cookie);
-            send_data(Chunk::cookie_ack_bytes(), from);
+            let assoc_id = self.make_new_assoc(packet, from, &init_ack.aliases);
+            // TODO send cookie echo
             Some(assoc_id)
         } else {
             None
         }
     }
 
-    fn make_new_assoc(&mut self, packet: &Packet, state_cookie: StateCookie) -> AssocId {
+    fn make_new_assoc(
+        &mut self,
+        packet: &Packet,
+        init_address: TransportAddress,
+        alias_addresses: &[TransportAddress],
+    ) -> AssocId {
         let (sender, receiver) = std::sync::mpsc::channel();
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
@@ -242,21 +322,17 @@ where
             },
         );
         let original_alias = AssocAlias {
-            peer_addr: state_cookie.init_address,
+            peer_addr: init_address,
             peer_port: packet.from(),
             local_port: packet.to(),
         };
         self.aliases.insert(original_alias, assoc_id);
-        for alias_addr in state_cookie.aliases {
+        for alias_addr in alias_addresses {
             let mut alias = original_alias;
-            alias.peer_addr = alias_addr;
+            alias.peer_addr = *alias_addr;
             self.aliases.insert(alias, assoc_id);
         }
-        (self.new_assoc_cb)(Association::new(
-            assoc_id,
-            receiver,
-            state_cookie.init_address,
-        ));
+        (self.new_assoc_cb)(Association::new(assoc_id, receiver, init_address));
         assoc_id
     }
 

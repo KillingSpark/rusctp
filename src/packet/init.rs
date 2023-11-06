@@ -97,7 +97,7 @@ impl InitAck {
         let init_tsn = data.get_u32();
 
         // TODO params
-        let cookie = StateCookie::parse(data)?;
+        let cookie = StateCookie::parse(data);
 
         Some(Self {
             initiate_tag: init_tag,

@@ -3,7 +3,7 @@ use bytes::{BufMut, Bytes};
 use crate::TransportAddress;
 
 use self::{
-    cookie::StateCookie,
+    cookie::{Cookie, StateCookie},
     data::DataChunk,
     init::{InitAck, InitChunk},
 };
@@ -19,6 +19,14 @@ pub struct Packet {
 }
 
 impl Packet {
+    pub fn new(from: u16, to: u16, verification_tag: u32) -> Self {
+        Self {
+            to,
+            from,
+            verification_tag,
+        }
+    }
+
     pub fn parse(data: &[u8]) -> Option<Self> {
         let from = u16::from_be_bytes(data[0..2].try_into().ok()?);
         let to = u16::from_be_bytes(data[2..4].try_into().ok()?);
@@ -39,6 +47,22 @@ impl Packet {
             to,
             verification_tag,
         })
+    }
+
+    pub fn serialize(&self, buf: &mut impl BufMut, chunks: &Bytes) {
+        buf.put_u16(self.from);
+        buf.put_u16(self.to);
+        buf.put_u32(self.verification_tag);
+
+        let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
+        let mut digest = crc.digest();
+        digest.update(&self.from.to_be_bytes());
+        digest.update(&self.to.to_be_bytes());
+        digest.update(&self.verification_tag.to_be_bytes());
+        digest.update(&[0, 0, 0, 0]);
+        digest.update(&chunks);
+
+        buf.put_u32(digest.finalize());
     }
 
     pub fn from(&self) -> u16 {
@@ -100,6 +124,14 @@ impl Chunk {
         }
     }
 
+    pub fn is_init_ack(data: &[u8]) -> bool {
+        if data.len() < CHUNK_HEADER_SIZE {
+            false
+        } else {
+            data[0] == 2
+        }
+    }
+
     pub fn is_cookie_echo(data: &[u8]) -> bool {
         if data.len() < CHUNK_HEADER_SIZE {
             false
@@ -145,13 +177,13 @@ impl Chunk {
             7 => Chunk::ShutDown,
             8 => Chunk::ShutDownAck,
             9 => Chunk::OpError,
-            10 => Chunk::StateCookie(StateCookie {
+            10 => Chunk::StateCookie(StateCookie::Ours(Cookie {
                 aliases: vec![],
                 init_address: TransportAddress::Fake(100),
                 peer_port: 10,
                 local_port: 10,
                 mac: 100,
-            }),
+            })),
             11 => Chunk::StateCookieAck,
             12 => Chunk::_ReservedECNE,
             13 => Chunk::_ReservedCWR,
