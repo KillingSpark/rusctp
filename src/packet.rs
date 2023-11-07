@@ -60,7 +60,7 @@ impl Packet {
         digest.update(&self.to.to_be_bytes());
         digest.update(&self.verification_tag.to_be_bytes());
         digest.update(&[0, 0, 0, 0]);
-        digest.update(&chunks);
+        digest.update(chunks);
 
         buf.put_u32(digest.finalize());
     }

@@ -2,7 +2,7 @@ mod packet;
 use bytes::{Buf, Bytes, BytesMut};
 pub use packet::*;
 
-mod assoc;
+pub mod assoc;
 use assoc::Association;
 use packet::{
     cookie::{Cookie, StateCookie},
@@ -10,9 +10,8 @@ use packet::{
 };
 
 use std::{
-    collections::{BinaryHeap, HashMap},
+    collections::{HashMap, VecDeque},
     net::{Ipv4Addr, Ipv6Addr},
-    sync::mpsc::Sender,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -32,44 +31,48 @@ pub struct AssocAlias {
     local_port: u16,
 }
 
-pub(crate) enum SendToAssoc {
-    Chunk(Chunk),
+pub enum TxNotification {
+    Send(Chunk),
     _PrimaryPathChanged(TransportAddress),
 }
+pub enum RxNotification {
+    Chunk(Chunk),
+}
 struct PerAssocInfo {
-    sender: Sender<SendToAssoc>,
     verification_tag: u32,
 }
 
-pub struct Sctp<AssocCb>
-where
-    AssocCb: FnMut(Association),
-{
+pub struct Settings {}
+
+pub struct Sctp {
     assoc_id_gen: u64,
-    new_assoc_cb: AssocCb,
+    new_assoc: Option<Association>,
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
     aliases: HashMap<AssocAlias, AssocId>,
-    assocs_need_tick: BinaryHeap<AssocId>,
 
     half_open_assocs: HashMap<AssocId, AssocAlias>,
 
     cookie_secret: Vec<u8>,
+
+    tx_notifications: VecDeque<(AssocId, TxNotification)>,
+    send_immediate: VecDeque<(TransportAddress, Bytes)>,
+    rx_notifications: VecDeque<(AssocId, RxNotification)>,
 }
 
-impl<AssocCb> Sctp<AssocCb>
-where
-    AssocCb: FnMut(Association),
-{
-    pub fn new(assoc_cb: AssocCb) -> Self {
+impl Sctp {
+    pub fn new(_settings: Settings) -> Self {
         Self {
             assoc_id_gen: 1,
-            new_assoc_cb: assoc_cb,
+            new_assoc: None,
             assoc_infos: HashMap::new(),
             aliases: HashMap::new(),
-            assocs_need_tick: BinaryHeap::new(),
             cookie_secret: vec![1, 2, 3, 4], // TODO
 
             half_open_assocs: HashMap::new(),
+
+            tx_notifications: VecDeque::new(),
+            rx_notifications: VecDeque::new(),
+            send_immediate: VecDeque::new(),
         }
     }
 
@@ -111,28 +114,22 @@ where
         assoc_id
     }
 
-    pub fn receive_data(
-        &mut self,
-        mut data: Bytes,
-        from: TransportAddress,
-        mut send_data: impl FnMut(Bytes, TransportAddress),
-    ) {
+    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress) {
         let Some(packet) = Packet::parse(&data) else {
             return;
         };
         data.advance(12);
 
         // If we get an init chunk we only send the init ack and return immediatly
-        if self.handle_init(&packet, &data, from, &mut send_data) {
+        if self.handle_init(&packet, &data, from) {
             return;
         }
 
         // Either we have accepted a new association here
-        let new_assoc_id = self.handle_cookie_echo(&packet, &mut data, from, &mut send_data);
+        let new_assoc_id = self.handle_cookie_echo(&packet, &mut data);
 
         // Or we get an ack on an association we initiated
-        let new_assoc_id =
-            new_assoc_id.or_else(|| self.handle_init_ack(&packet, &mut data, from, &mut send_data));
+        let new_assoc_id = new_assoc_id.or_else(|| self.handle_init_ack(&packet, &mut data, from));
 
         // Or we need to look the ID up via the aliases
         let assoc_id = new_assoc_id.or_else(|| {
@@ -167,11 +164,8 @@ where
                     if let Chunk::Init(_) = chunk {
                         // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
                     } else {
-                        if let Err(_err) = assoc_info.sender.send(SendToAssoc::Chunk(chunk)) {
-                            // TODO handle err
-                            // maybe just drop? This is basically the receive window right?
-                        }
-                        self.assocs_need_tick.push(assoc_id)
+                        self.rx_notifications
+                            .push_back((assoc_id, RxNotification::Chunk(chunk)));
                     }
                 }
                 Err(ParseError::Unrecognized { stop, report: _ }) => {
@@ -193,13 +187,7 @@ where
     }
 
     /// Returns true if the packet should not be processed further
-    fn handle_init(
-        &mut self,
-        packet: &Packet,
-        data: &Bytes,
-        from: TransportAddress,
-        mut send_data: impl FnMut(Bytes, TransportAddress),
-    ) -> bool {
+    fn handle_init(&mut self, packet: &Packet, data: &Bytes, from: TransportAddress) -> bool {
         if !Chunk::is_init(data) {
             return false;
         }
@@ -232,7 +220,7 @@ where
             let mut buf = BytesMut::with_capacity(init_ack.serialized_size());
             // TODO put packet header here
             init_ack.serialize(&mut buf);
-            send_data(buf.freeze(), from);
+            self.send_immediate.push_back((from, buf.freeze()));
             // handled the init correctly, no need to process the packet any further
             true
         } else {
@@ -244,13 +232,7 @@ where
         unimplemented!()
     }
 
-    fn handle_cookie_echo(
-        &mut self,
-        packet: &Packet,
-        data: &mut Bytes,
-        from: TransportAddress,
-        mut send_data: impl FnMut(Bytes, TransportAddress),
-    ) -> Option<AssocId> {
+    fn handle_cookie_echo(&mut self, packet: &Packet, data: &mut Bytes) -> Option<AssocId> {
         if !Chunk::is_cookie_echo(data) {
             return None;
         }
@@ -279,7 +261,8 @@ where
 
         data.advance(size);
         let assoc_id = self.make_new_assoc(packet, cookie.init_address, &cookie.aliases);
-        send_data(Chunk::cookie_ack_bytes(), from);
+        self.tx_notifications
+            .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
         Some(assoc_id)
     }
 
@@ -288,7 +271,6 @@ where
         packet: &Packet,
         data: &mut Bytes,
         from: TransportAddress,
-        _send_data: impl FnMut(Bytes, TransportAddress),
     ) -> Option<AssocId> {
         if !Chunk::is_init_ack(data) {
             return None;
@@ -312,12 +294,10 @@ where
         init_address: TransportAddress,
         alias_addresses: &[TransportAddress],
     ) -> AssocId {
-        let (sender, receiver) = std::sync::mpsc::channel();
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
             assoc_id,
             PerAssocInfo {
-                sender,
                 verification_tag: packet.verification_tag(),
             },
         );
@@ -332,7 +312,7 @@ where
             alias.peer_addr = *alias_addr;
             self.aliases.insert(alias, assoc_id);
         }
-        (self.new_assoc_cb)(Association::new(assoc_id, receiver, init_address));
+        self.new_assoc = Some(Association::new(assoc_id, init_address));
         assoc_id
     }
 
@@ -341,7 +321,10 @@ where
         AssocId(self.assoc_id_gen)
     }
 
-    pub fn assocs_need_tick(&self) -> impl Iterator<Item = AssocId> + '_ {
-        self.assocs_need_tick.iter().copied()
+    pub fn rx_notifications(&mut self) -> impl Iterator<Item = (AssocId, RxNotification)> + '_ {
+        self.rx_notifications.drain(..)
+    }
+    pub fn tx_notifications(&mut self) -> impl Iterator<Item = (AssocId, TxNotification)> + '_ {
+        self.tx_notifications.drain(..)
     }
 }

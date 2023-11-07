@@ -23,9 +23,9 @@ impl DataChunk {
         let stream_seq_num = data.get_u16();
         let ppid = data.get_u32();
 
-        let immediate = flags & (0x1 << 3) == 1;
-        let unordered = flags & (0x1 << 2) == 1;
-        let begin = flags & (0x1 << 1) == 1;
+        let immediate = flags & (0x1 << 3) == 0x1 << 3;
+        let unordered = flags & (0x1 << 2) == 0x1 << 2;
+        let begin = flags & (0x1 << 1) == 0x1 << 1;
         let end = flags & 0x1 == 1;
 
         Some(Self {
@@ -47,7 +47,7 @@ impl DataChunk {
     }
 
     pub fn serialize(&self, buf: &mut impl BufMut) {
-        if self.buf.len() > 0 {
+        if !self.buf.is_empty() {
             // header
             buf.put_u8(0);
             buf.put_u8(self.serialize_flags());
