@@ -36,7 +36,7 @@ impl StateCookie {
     pub fn make_ours(&mut self) -> Option<&Cookie> {
         match self {
             Self::Ours(cookie) => Some(cookie),
-            Self::Opaque(_) => todo!()
+            Self::Opaque(_) => todo!(),
         }
     }
 }
