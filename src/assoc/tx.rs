@@ -2,7 +2,7 @@ use std::{collections::VecDeque, time::Instant};
 
 use bytes::Bytes;
 
-use crate::{data::DataChunk, AssocId, Chunk, TransportAddress, TxNotification};
+use crate::{data::DataChunk, AssocId, Chunk, TransportAddress};
 
 pub struct AssociationTx {
     id: AssocId,
@@ -11,6 +11,11 @@ pub struct AssociationTx {
     send_next: VecDeque<Chunk>,
 
     timeout: Option<Instant>,
+}
+
+pub enum TxNotification {
+    Send(Chunk),
+    _PrimaryPathChanged(TransportAddress),
 }
 
 impl AssociationTx {

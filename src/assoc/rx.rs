@@ -1,10 +1,14 @@
 use std::collections::VecDeque;
 
-use crate::{data::DataChunk, AssocId, RxNotification, Chunk};
+use crate::{data::DataChunk, AssocId, Chunk};
 
 pub struct AssociationRx {
     id: AssocId,
     in_queue: VecDeque<DataChunk>,
+}
+
+pub enum RxNotification {
+    Chunk(Chunk),
 }
 
 impl AssociationRx {

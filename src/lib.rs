@@ -3,7 +3,7 @@ use bytes::{Buf, Bytes, BytesMut};
 pub use packet::*;
 
 pub mod assoc;
-use assoc::Association;
+use assoc::{Association, RxNotification, TxNotification};
 use packet::{
     cookie::{Cookie, StateCookie},
     init::{InitAck, InitChunk},
@@ -29,14 +29,6 @@ pub struct AssocAlias {
     peer_addr: TransportAddress,
     peer_port: u16,
     local_port: u16,
-}
-
-pub enum TxNotification {
-    Send(Chunk),
-    _PrimaryPathChanged(TransportAddress),
-}
-pub enum RxNotification {
-    Chunk(Chunk),
 }
 struct PerAssocInfo {
     verification_tag: u32,
