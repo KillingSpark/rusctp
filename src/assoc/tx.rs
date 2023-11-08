@@ -2,7 +2,8 @@ use std::{collections::VecDeque, time::Instant};
 
 use bytes::Bytes;
 
-use crate::{data::DataChunk, AssocId, Chunk, Packet, TransportAddress};
+use crate::packet::data::DataChunk;
+use crate::{AssocId, Chunk, Packet, TransportAddress};
 
 pub struct AssociationTx {
     id: AssocId,

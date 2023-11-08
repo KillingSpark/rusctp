@@ -1,8 +1,11 @@
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
-    cookie::{self, StateCookie},
-    SupportedAddrTypes, TransportAddress, UnrecognizedParam,
+    packet::{
+        cookie::{self, StateCookie},
+        SupportedAddrTypes, UnrecognizedParam,
+    },
+    TransportAddress,
 };
 
 pub struct InitChunk {

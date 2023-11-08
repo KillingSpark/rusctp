@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
-use crate::{data::DataChunk, AssocId, Chunk};
-
+use crate::packet::data::DataChunk;
+use crate::{AssocId, Chunk};
 pub struct AssociationRx {
     id: AssocId,
     in_queue: VecDeque<DataChunk>,
