@@ -2,11 +2,15 @@ use std::{collections::VecDeque, time::Instant};
 
 use bytes::Bytes;
 
-use crate::{data::DataChunk, AssocId, Chunk, TransportAddress};
+use crate::{data::DataChunk, AssocId, Chunk, Packet, TransportAddress};
 
 pub struct AssociationTx {
     id: AssocId,
     primary_path: TransportAddress,
+    peer_verification_tag: u32,
+    local_port: u16,
+    peer_port: u16,
+
     out_queue: VecDeque<DataChunk>,
     send_next: VecDeque<Chunk>,
 
@@ -19,10 +23,20 @@ pub enum TxNotification {
 }
 
 impl AssociationTx {
-    pub(crate) fn new(id: AssocId, primary_path: TransportAddress) -> Self {
+    pub(crate) fn new(
+        id: AssocId,
+        primary_path: TransportAddress,
+        peer_verification_tag: u32,
+        local_port: u16,
+        peer_port: u16,
+    ) -> Self {
         Self {
             id,
             primary_path,
+            peer_verification_tag,
+            local_port,
+            peer_port,
+
             out_queue: VecDeque::new(),
             send_next: VecDeque::new(),
 
@@ -32,6 +46,10 @@ impl AssociationTx {
 
     pub fn id(&self) -> AssocId {
         self.id
+    }
+
+    pub fn packet_header(&self) -> Packet {
+        Packet::new(self.local_port, self.peer_port, self.peer_verification_tag)
     }
 
     pub fn tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {

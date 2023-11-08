@@ -4,8 +4,6 @@ pub use rx::*;
 pub mod tx;
 pub use tx::*;
 
-
-
 use crate::{AssocId, TransportAddress};
 
 pub struct Association {
@@ -14,10 +12,22 @@ pub struct Association {
 }
 
 impl Association {
-    pub(crate) fn new(id: AssocId, primary_path: TransportAddress) -> Self {
+    pub(crate) fn new(
+        id: AssocId,
+        primary_path: TransportAddress,
+        peer_verification_tag: u32,
+        local_port: u16,
+        peer_port: u16,
+    ) -> Self {
         Self {
             rx: AssociationRx::new(id),
-            tx: AssociationTx::new(id, primary_path),
+            tx: AssociationTx::new(
+                id,
+                primary_path,
+                peer_verification_tag,
+                local_port,
+                peer_port,
+            ),
         }
     }
 
