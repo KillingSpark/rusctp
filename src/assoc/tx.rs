@@ -20,6 +20,7 @@ pub struct AssociationTx {
 
 pub enum TxNotification {
     Send(Chunk),
+    SAck,
     _PrimaryPathChanged(TransportAddress),
 }
 
@@ -76,6 +77,9 @@ impl AssociationTx {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
+            TxNotification::SAck => {
+                // TODO
+            }
         }
     }
 

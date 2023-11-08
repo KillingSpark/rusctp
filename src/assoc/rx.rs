@@ -2,9 +2,13 @@ use std::collections::VecDeque;
 
 use crate::packet::data::DataChunk;
 use crate::{AssocId, Chunk};
+
+use super::TxNotification;
 pub struct AssociationRx {
     id: AssocId,
     in_queue: VecDeque<DataChunk>,
+
+    tx_notifications: VecDeque<TxNotification>,
 }
 
 pub enum RxNotification {
@@ -16,6 +20,8 @@ impl AssociationRx {
         Self {
             id,
             in_queue: VecDeque::new(),
+
+            tx_notifications: VecDeque::new(),
         }
     }
 
@@ -29,6 +35,10 @@ impl AssociationRx {
         };
     }
 
+    pub fn tx_notifications(&mut self) -> impl Iterator<Item = TxNotification> + '_ {
+        self.tx_notifications.drain(..)
+    }
+
     fn handle_chunk(
         &mut self,
         chunk: Chunk,
@@ -38,6 +48,7 @@ impl AssociationRx {
             Chunk::Data(data) => {
                 self.in_queue.push_back(data);
             }
+            Chunk::SAck => self.tx_notifications.push_back(TxNotification::SAck),
             _ => {
                 todo!()
             }
