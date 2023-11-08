@@ -1,5 +1,5 @@
 mod packet;
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, Bytes};
 pub use packet::*;
 
 pub mod assoc;
@@ -79,6 +79,18 @@ impl Sctp {
         peer_port: u16,
         local_port: u16,
     ) {
+        let alias = AssocAlias {
+            peer_addr,
+            peer_port,
+            local_port,
+        };
+        self.half_open_assocs.insert(
+            alias,
+            PerHalfOpenInfo {
+                local_verification_tag: 1337, // TODO
+            },
+        );
+
         let init_chunk = Chunk::Init(InitChunk {
             initiate_tag: 0,
             a_rwnd: 1500,
@@ -92,26 +104,9 @@ impl Sctp {
             supported_addr_types: None,
         });
 
-        let packet = Packet::new(peer_port, local_port, 1337);
-
-        let mut packet_header = BytesMut::with_capacity(12);
-        let mut chunks = BytesMut::with_capacity(init_chunk.serialized_size());
-        init_chunk.serialize(&mut chunks);
-        let chunks = chunks.freeze();
-        packet.serialize(&mut packet_header, &chunks);
-
-        let alias = AssocAlias {
-            peer_addr,
-            peer_port,
-            local_port,
-        };
-        self.half_open_assocs.insert(
-            alias,
-            PerHalfOpenInfo {
-                local_verification_tag: 1337, // TODO
-            },
-        );
-        // TODO do something with chunks and packet_header
+        let packet = Packet::new(peer_port, local_port, 1337 /* TODO */);
+        self.send_immediate
+            .push_back((peer_addr, packet, init_chunk))
     }
 
     pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress) {
