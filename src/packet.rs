@@ -184,6 +184,7 @@ impl Chunk {
                 local_port: 10,
                 mac: 100,
                 local_verification_tag: 1337,
+                peer_verification_tag: 1337,
             })),
             11 => Chunk::StateCookieAck,
             12 => Chunk::_ReservedECNE,

@@ -18,6 +18,7 @@ pub struct Cookie {
     pub local_port: u16,
     pub aliases: Vec<TransportAddress>,
     pub local_verification_tag: u32,
+    pub peer_verification_tag: u32,
 }
 
 impl StateCookie {

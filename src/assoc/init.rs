@@ -6,7 +6,7 @@ use crate::{
         init::{InitAck, InitChunk},
         Chunk, Packet,
     },
-    AssocAlias, AssocId, PerAssocInfo, PerHalfOpenInfo, Sctp, TransportAddress,
+    AssocAlias, AssocId, PerAssocInfo, Sctp, TransportAddress, WaitInitAck,
 };
 
 use super::{Association, TxNotification};
@@ -25,9 +25,9 @@ impl Sctp {
             peer_port,
             local_port,
         };
-        self.half_open_assocs.insert(
+        self.wait_init_ack.insert(
             alias,
-            PerHalfOpenInfo {
+            WaitInitAck {
                 local_verification_tag: 1337, // TODO
             },
         );
@@ -50,7 +50,54 @@ impl Sctp {
             .push_back((peer_addr, packet, init_chunk))
     }
 
+    /// Returns true if the packet should not be processed further
     pub(crate) fn handle_init_ack(
+        &mut self,
+        packet: &Packet,
+        data: &mut Bytes,
+        from: TransportAddress,
+    ) -> bool {
+        if !Chunk::is_init_ack(data) {
+            return true;
+        }
+        let (size, Ok(chunk)) = Chunk::parse(data) else {
+            return true;
+        };
+        if let Chunk::InitAck(init_ack) = chunk {
+            if size != data.len() {
+                // This is illegal, the init_ack needs to be the only chunk in the packet
+                // -> stop processing this
+                return true;
+            }
+            let alias = AssocAlias {
+                peer_addr: from,
+                peer_port: packet.from(),
+                local_port: packet.to(),
+            };
+            let Some(half_open) = self.wait_init_ack.remove(&alias) else {
+                return true;
+            };
+            self.wait_cookie_ack.insert(
+                alias,
+                crate::WaitCookieAck {
+                    peer_verification_tag: init_ack.initiate_tag,
+                    local_verification_tag: half_open.local_verification_tag,
+                    aliases: init_ack.aliases,
+                    original_address: from,
+                },
+            );
+            self.send_immediate.push_back((
+                from,
+                Packet::new(packet.to(), packet.from(), init_ack.initiate_tag),
+                Chunk::StateCookie(init_ack.cookie),
+            ));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn handle_cookie_ack(
         &mut self,
         packet: &Packet,
         data: &mut Bytes,
@@ -62,20 +109,20 @@ impl Sctp {
         let (size, Ok(chunk)) = Chunk::parse(data) else {
             return None;
         };
-        if let Chunk::InitAck(init_ack) = chunk {
+        if let Chunk::StateCookieAck = chunk {
             data.advance(size);
-            let half_open = self.half_open_assocs.remove(&AssocAlias {
+            let half_open = self.wait_cookie_ack.remove(&AssocAlias {
                 peer_addr: from,
                 peer_port: packet.from(),
                 local_port: packet.to(),
             })?;
             let assoc_id = self.make_new_assoc(
                 packet,
-                from,
-                &init_ack.aliases,
+                half_open.original_address,
+                &half_open.aliases,
                 half_open.local_verification_tag,
+                half_open.peer_verification_tag,
             );
-            // TODO send cookie echo
             Some(assoc_id)
         } else {
             None
@@ -116,6 +163,7 @@ impl Sctp {
                 peer_port: packet.from(),
                 local_port: packet.to(),
                 local_verification_tag: 1337, // TODO
+                peer_verification_tag: init.initiate_tag,
                 mac,
             });
             let init_ack = Chunk::InitAck(self.create_init_ack(cookie));
@@ -172,6 +220,7 @@ impl Sctp {
             cookie.init_address,
             &cookie.aliases,
             cookie.local_verification_tag,
+            cookie.peer_verification_tag,
         );
         self.tx_notifications
             .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
@@ -184,13 +233,14 @@ impl Sctp {
         init_address: TransportAddress,
         alias_addresses: &[TransportAddress],
         local_verification_tag: u32,
+        peer_verification_tag: u32,
     ) -> AssocId {
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
             assoc_id,
             PerAssocInfo {
-                _peer_verification_tag: packet.verification_tag(),
                 local_verification_tag,
+                _peer_verification_tag: peer_verification_tag,
             },
         );
         let original_alias = AssocAlias {

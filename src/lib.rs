@@ -31,8 +31,15 @@ struct PerAssocInfo {
     _peer_verification_tag: u32,
 }
 
-struct PerHalfOpenInfo {
+struct WaitInitAck {
     local_verification_tag: u32,
+}
+
+struct WaitCookieAck {
+    local_verification_tag: u32,
+    peer_verification_tag: u32,
+    aliases: Vec<TransportAddress>,
+    original_address: TransportAddress,
 }
 
 pub struct Settings {}
@@ -43,7 +50,8 @@ pub struct Sctp {
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
     aliases: HashMap<AssocAlias, AssocId>,
 
-    half_open_assocs: HashMap<AssocAlias, PerHalfOpenInfo>,
+    wait_init_ack: HashMap<AssocAlias, WaitInitAck>,
+    wait_cookie_ack: HashMap<AssocAlias, WaitCookieAck>,
 
     cookie_secret: Vec<u8>,
 
@@ -61,7 +69,8 @@ impl Sctp {
             aliases: HashMap::new(),
             cookie_secret: vec![1, 2, 3, 4], // TODO
 
-            half_open_assocs: HashMap::new(),
+            wait_init_ack: HashMap::new(),
+            wait_cookie_ack: HashMap::new(),
 
             tx_notifications: VecDeque::new(),
             rx_notifications: VecDeque::new(),
@@ -80,11 +89,16 @@ impl Sctp {
             return;
         }
 
+        if self.handle_init_ack(&packet, &mut data, from) {
+            return;
+        }
+
         // Either we have accepted a new association here
         let new_assoc_id = self.handle_cookie_echo(&packet, &mut data);
 
         // Or we get an ack on an association we initiated
-        let new_assoc_id = new_assoc_id.or_else(|| self.handle_init_ack(&packet, &mut data, from));
+        let new_assoc_id =
+            new_assoc_id.or_else(|| self.handle_cookie_ack(&packet, &mut data, from));
 
         // Or we need to look the ID up via the aliases
         let assoc_id = new_assoc_id.or_else(|| {
