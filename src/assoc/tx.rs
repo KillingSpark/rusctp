@@ -1,7 +1,5 @@
 use std::{collections::VecDeque, time::Instant};
 
-use bytes::Bytes;
-
 use crate::packet::data::DataChunk;
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 
@@ -50,10 +48,6 @@ impl AssociationTx {
         self.id
     }
 
-    pub fn packet_header(&self) -> Packet {
-        Packet::new(self.local_port, self.peer_port, self.peer_verification_tag)
-    }
-
     pub fn tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
         let mut next_tick = None;
 
@@ -83,10 +77,30 @@ impl AssociationTx {
         }
     }
 
-    pub fn poll_data_to_send(&mut self) -> Option<(TransportAddress, Bytes)> {
-        // TODO build a packet with all send_next and maybe some data from the out_queue
-        _ = self.send_next.front();
-        _ = self.out_queue.front();
-        None
+    pub fn packet_header(&self) -> Packet {
+        Packet::new(self.local_port, self.peer_port, self.peer_verification_tag)
+    }
+
+    pub fn primary_path(&self) -> TransportAddress {
+        self.primary_path
+    }
+
+    // Collect next chunk if it would still fit inside the limit
+    pub fn poll_signal_to_send(&mut self, limit: usize) -> Option<Chunk> {
+        if self.send_next.front()?.serialized_size() < limit {
+            self.send_next.pop_front()
+        } else {
+            None
+        }
+    }
+
+    // Collect next chunk if it would still fit inside the limit
+    pub fn poll_data_to_send(&mut self, limit: usize) -> Option<DataChunk> {
+        if self.out_queue.front()?.serialized_size() < limit {
+            self.out_queue.pop_front()
+        } else {
+            // TODO fragment the datachunk
+            None
+        }
     }
 }
