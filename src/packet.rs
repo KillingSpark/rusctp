@@ -125,7 +125,23 @@ pub struct SupportedAddrTypes {
     ipv6: bool,
 }
 
-static COOKIE_ACK_BYTES: &[u8] = &[11, 0, 0, 4];
+static COOKIE_ACK_BYTES: &[u8] = &[CHUNK_STATE_COOKIE_ACK, 0, 0, 4];
+
+pub(crate) const CHUNK_DATA: u8 = 0;
+pub(crate) const CHUNK_INIT: u8 = 1;
+pub(crate) const CHUNK_INIT_ACK: u8 = 2;
+pub(crate) const CHUNK_SACK: u8 = 3;
+pub(crate) const CHUNK_HEARTBEAT: u8 = 4;
+pub(crate) const CHUNK_HEARTBEAT_ACK: u8 = 5;
+pub(crate) const CHUNK_ABORT: u8 = 6;
+pub(crate) const CHUNK_SHUTDOWN: u8 = 7;
+pub(crate) const CHUNK_SHUTDOWN_ACK: u8 = 8;
+pub(crate) const CHUNK_OP_ERROR: u8 = 9;
+pub(crate) const CHUNK_STATE_COOKIE: u8 = 10;
+pub(crate) const CHUNK_STATE_COOKIE_ACK: u8 = 11;
+pub(crate) const CHUNK_RESERVED_ECNE: u8 = 12;
+pub(crate) const CHUNK_RESERVED_CWR: u8 = 13;
+pub(crate) const CHUNK_SHUTDOWN_COMPLETE: u8 = 14;
 
 const CHUNK_HEADER_SIZE: usize = 4;
 impl Chunk {
@@ -170,32 +186,32 @@ impl Chunk {
         let padded_len = usize::min(len + len % 4, data.len());
 
         let chunk = match typ {
-            0 => {
+            CHUNK_DATA => {
                 let Some(data) = DataChunk::parse(flags, value) else {
                     return (padded_len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::Data(data)
             }
-            1 => {
+            CHUNK_INIT => {
                 let Some(init) = InitChunk::parse(value) else {
                     return (padded_len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::Init(init)
             }
-            2 => {
+            CHUNK_INIT_ACK => {
                 let Some(init) = InitAck::parse(value) else {
                     return (padded_len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::InitAck(init)
             }
-            3 => Chunk::SAck,
-            4 => Chunk::HeartBeat,
-            5 => Chunk::HeartBeatAck,
-            6 => Chunk::Abort,
-            7 => Chunk::ShutDown,
-            8 => Chunk::ShutDownAck,
-            9 => Chunk::OpError,
-            10 => Chunk::StateCookie(StateCookie::Ours(Cookie {
+            CHUNK_SACK => Chunk::SAck,
+            CHUNK_HEARTBEAT => Chunk::HeartBeat,
+            CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck,
+            CHUNK_ABORT => Chunk::Abort,
+            CHUNK_SHUTDOWN => Chunk::ShutDown,
+            CHUNK_SHUTDOWN_ACK => Chunk::ShutDownAck,
+            CHUNK_OP_ERROR => Chunk::OpError,
+            CHUNK_STATE_COOKIE => Chunk::StateCookie(StateCookie::Ours(Cookie {
                 aliases: vec![],
                 init_address: TransportAddress::Fake(100),
                 peer_port: 10,
@@ -204,10 +220,10 @@ impl Chunk {
                 local_verification_tag: 1337,
                 peer_verification_tag: 1337,
             })),
-            11 => Chunk::StateCookieAck,
-            12 => Chunk::_ReservedECNE,
-            13 => Chunk::_ReservedCWR,
-            14 => Chunk::ShutDownComplete,
+            CHUNK_STATE_COOKIE_ACK => Chunk::StateCookieAck,
+            CHUNK_RESERVED_ECNE => Chunk::_ReservedECNE,
+            CHUNK_RESERVED_CWR => Chunk::_ReservedCWR,
+            CHUNK_SHUTDOWN_COMPLETE => Chunk::ShutDownComplete,
             _ => return (padded_len, Err(parse_error(typ))),
         };
         (padded_len, Ok(chunk))

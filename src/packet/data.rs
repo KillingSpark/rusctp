@@ -1,5 +1,7 @@
 use bytes::{Buf, BufMut, Bytes};
 
+use super::CHUNK_DATA;
+
 pub struct DataChunk {
     tsn: u32,
     stream_id: u16,
@@ -49,7 +51,7 @@ impl DataChunk {
     pub fn serialize(&self, buf: &mut impl BufMut) {
         if !self.buf.is_empty() {
             // header
-            buf.put_u8(0);
+            buf.put_u8(CHUNK_DATA);
             buf.put_u8(self.serialize_flags());
             buf.put_u16(self.serialized_size() as u16);
 
