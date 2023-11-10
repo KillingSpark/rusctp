@@ -172,7 +172,11 @@ impl Sctp {
         }
     }
 
-    fn create_init_ack(&self, unrecognized: Vec<UnrecognizedParam>, _cookie: StateCookie) -> InitAck {
+    fn create_init_ack(
+        &self,
+        unrecognized: Vec<UnrecognizedParam>,
+        _cookie: StateCookie,
+    ) -> InitAck {
         _ = unrecognized;
         unimplemented!()
     }

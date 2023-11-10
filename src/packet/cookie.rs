@@ -6,8 +6,8 @@ use bytes::Bytes;
 
 use crate::TransportAddress;
 
-use super::param::PARAM_STATE_COOKIE;
 use super::param::padding_needed;
+use super::param::PARAM_STATE_COOKIE;
 
 pub enum StateCookie {
     Ours(Cookie),

@@ -5,7 +5,8 @@ use crate::TransportAddress;
 use self::{
     cookie::{Cookie, StateCookie},
     data::DataChunk,
-    init::{InitAck, InitChunk}, param::{PARAM_UNRECOGNIZED, padding_needed, PARAM_HEADER_SIZE},
+    init::{InitAck, InitChunk},
+    param::{padding_needed, PARAM_HEADER_SIZE, PARAM_UNRECOGNIZED},
 };
 
 pub mod cookie;
