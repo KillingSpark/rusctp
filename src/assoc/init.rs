@@ -40,7 +40,7 @@ impl Sctp {
             initial_tsn: 1337,
 
             aliases: vec![],
-            cookie_preservative_msec: None,
+            cookie_preservative: None,
             ecn_capable: None,
             supported_addr_types: None,
         });

@@ -11,6 +11,7 @@ use self::{
 pub mod cookie;
 pub mod data;
 pub mod init;
+pub mod param;
 
 pub struct Packet {
     from: u16,
@@ -97,7 +98,8 @@ pub enum Chunk {
 }
 
 pub struct UnrecognizedParam {
-    pub typ: u8,
+    pub typ: u16,
+    pub data: Bytes,
 }
 
 pub enum ParseError {
@@ -106,10 +108,9 @@ pub enum ParseError {
     Done,
 }
 
-pub enum SupportedAddrTypes {
-    IpV4,
-    IpV6,
-    IpV4and6,
+pub struct SupportedAddrTypes {
+    ipv4: bool,
+    ipv6: bool,
 }
 
 static COOKIE_ACK_BYTES: &[u8] = &[11, 0, 0, 4];
@@ -149,24 +150,29 @@ impl Chunk {
         let len = u16::from_be_bytes(data[2..4].try_into().expect("This range is checked above"));
         let len = len as usize;
 
-        let value = data.slice(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + len);
+        if len > data.len() {
+            return (data.len(), Err(ParseError::IllegalFormat));
+        }
+
+        let value = data.slice(CHUNK_HEADER_SIZE..len);
+        let padded_len = usize::min(len + len % 4, data.len());
 
         let chunk = match typ {
             0 => {
                 let Some(data) = DataChunk::parse(flags, value) else {
-                    return (len, Err(ParseError::IllegalFormat));
+                    return (padded_len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::Data(data)
             }
             1 => {
                 let Some(init) = InitChunk::parse(value) else {
-                    return (len, Err(ParseError::IllegalFormat));
+                    return (padded_len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::Init(init)
             }
             2 => {
                 let Some(init) = InitAck::parse(value) else {
-                    return (len, Err(ParseError::IllegalFormat));
+                    return (padded_len, Err(ParseError::IllegalFormat));
                 };
                 Chunk::InitAck(init)
             }
@@ -190,47 +196,9 @@ impl Chunk {
             12 => Chunk::_ReservedECNE,
             13 => Chunk::_ReservedCWR,
             14 => Chunk::ShutDownComplete,
-            _ => match typ >> 6 {
-                0 => {
-                    return (
-                        len,
-                        Err(ParseError::Unrecognized {
-                            stop: true,
-                            report: false,
-                        }),
-                    )
-                }
-                1 => {
-                    return (
-                        len,
-                        Err(ParseError::Unrecognized {
-                            stop: true,
-                            report: true,
-                        }),
-                    )
-                }
-                2 => {
-                    return (
-                        len,
-                        Err(ParseError::Unrecognized {
-                            stop: false,
-                            report: false,
-                        }),
-                    )
-                }
-                3 => {
-                    return (
-                        len,
-                        Err(ParseError::Unrecognized {
-                            stop: true,
-                            report: true,
-                        }),
-                    )
-                }
-                _ => unreachable!("This can onlyy have 4 values"),
-            },
+            _ => return (padded_len, Err(parse_error(typ))),
         };
-        (len, Ok(chunk))
+        (padded_len, Ok(chunk))
     }
 
     pub fn serialize(&self, buf: &mut impl BufMut) {
@@ -251,5 +219,27 @@ impl Chunk {
 
     pub fn cookie_ack_bytes() -> Bytes {
         Bytes::from_static(COOKIE_ACK_BYTES)
+    }
+}
+
+fn parse_error(typ: u8) -> ParseError {
+    match typ >> 6 {
+        0 => ParseError::Unrecognized {
+            stop: true,
+            report: false,
+        },
+        1 => ParseError::Unrecognized {
+            stop: true,
+            report: true,
+        },
+        2 => ParseError::Unrecognized {
+            stop: false,
+            report: false,
+        },
+        3 => ParseError::Unrecognized {
+            stop: true,
+            report: true,
+        },
+        _ => unreachable!("This can onlyy have 4 values"),
     }
 }

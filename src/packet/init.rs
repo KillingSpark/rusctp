@@ -1,12 +1,16 @@
+use std::time::Duration;
+
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
     packet::{
-        cookie::{self, StateCookie},
+        cookie::{self},
         SupportedAddrTypes, UnrecognizedParam,
     },
     TransportAddress,
 };
+
+use super::param::{Param, ParseError};
 
 pub struct InitChunk {
     pub initiate_tag: u32,
@@ -17,7 +21,7 @@ pub struct InitChunk {
 
     // Optional
     pub aliases: Vec<TransportAddress>,
-    pub cookie_preservative_msec: Option<u32>,
+    pub cookie_preservative: Option<Duration>,
     pub ecn_capable: Option<bool>,
     pub supported_addr_types: Option<SupportedAddrTypes>,
 }
@@ -34,9 +38,7 @@ impl InitChunk {
         let nis = data.get_u16();
         let init_tsn = data.get_u32();
 
-        // TODO params
-
-        Some(Self {
+        let mut this = Self {
             initiate_tag: init_tag,
             a_rwnd,
             outbound_streams: nos,
@@ -44,10 +46,54 @@ impl InitChunk {
             initial_tsn: init_tsn,
 
             aliases: vec![],
-            cookie_preservative_msec: None,
+            cookie_preservative: None,
             ecn_capable: None,
             supported_addr_types: None,
-        })
+        };
+
+        while !data.is_empty() {
+            let (size, param) = Param::parse(&data);
+            data.advance(size);
+            match param {
+                Ok(param) => match param {
+                    Param::IpV4Addr(addr) => {
+                        this.aliases.push(TransportAddress::IpV4(addr));
+                    }
+                    Param::IpV6Addr(addr) => {
+                        this.aliases.push(TransportAddress::IpV6(addr));
+                    }
+                    Param::SupportedAddrTypes(support) => {
+                        this.supported_addr_types = Some(support);
+                    }
+                    Param::HostNameDeprecated => {
+                        // TODO react properly to deprecated param
+                    }
+                    Param::CookiePreservative(duration) => {
+                        this.cookie_preservative = Some(duration)
+                    }
+                    _ => {
+                        // TODO react properly to param that doesnt belong here
+                    }
+                },
+                Err(ParseError::Done) => {
+                    break;
+                }
+                Err(ParseError::IllegalFormat) => {
+                    break;
+                }
+                Err(ParseError::Unrecognized { report, stop, data }) => {
+                    if stop {
+                        break;
+                    }
+                    if report {
+                        _ = data;
+                        // TODO report data back
+                    }
+                }
+            }
+        }
+
+        Some(this)
     }
 
     pub fn serialized_size(&self) -> usize {
@@ -82,7 +128,7 @@ pub struct InitAck {
     // Optional
     pub unrecognized: Vec<UnrecognizedParam>,
     pub aliases: Vec<TransportAddress>,
-    pub cookie_preservative_msec: Option<u32>,
+    pub cookie_preservative: Option<Duration>,
     pub ecn_capable: Option<bool>,
     pub supported_addr_types: Option<SupportedAddrTypes>,
 }
@@ -99,8 +145,56 @@ impl InitAck {
         let nis = data.get_u16();
         let init_tsn = data.get_u32();
 
-        // TODO params
-        let cookie = StateCookie::parse(data);
+        let mut aliases = vec![];
+        let mut unrecognized = vec![];
+        let mut cookie_preservative = None;
+        let ecn_capable = None;
+        let mut supported_addr_types = None;
+
+        let mut cookie = None;
+
+        while !data.is_empty() {
+            let (size, param) = Param::parse(&data);
+            data.advance(size);
+            match param {
+                Ok(param) => match param {
+                    Param::IpV4Addr(addr) => {
+                        aliases.push(TransportAddress::IpV4(addr));
+                    }
+                    Param::IpV6Addr(addr) => {
+                        aliases.push(TransportAddress::IpV6(addr));
+                    }
+                    Param::SupportedAddrTypes(support) => {
+                        supported_addr_types = Some(support);
+                    }
+                    Param::HostNameDeprecated => {
+                        // TODO react properly to deprecated param
+                    }
+                    Param::CookiePreservative(duration) => cookie_preservative = Some(duration),
+                    Param::Unrecognized(p) => unrecognized.push(p),
+                    Param::StateCookie(c) => cookie = Some(c),
+                },
+                Err(ParseError::Done) => {
+                    break;
+                }
+                Err(ParseError::IllegalFormat) => {
+                    break;
+                }
+                Err(ParseError::Unrecognized { report, stop, data }) => {
+                    if stop {
+                        break;
+                    }
+                    if report {
+                        _ = data;
+                        // TODO report data back
+                    }
+                }
+            }
+        }
+
+        let Some(cookie) = cookie else {
+            return None;
+        };
 
         Some(Self {
             initiate_tag: init_tag,
@@ -111,11 +205,11 @@ impl InitAck {
 
             cookie,
 
-            aliases: vec![],
-            unrecognized: vec![],
-            cookie_preservative_msec: None,
-            ecn_capable: None,
-            supported_addr_types: None,
+            aliases,
+            unrecognized,
+            cookie_preservative,
+            ecn_capable,
+            supported_addr_types,
         })
     }
 
