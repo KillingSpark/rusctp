@@ -22,7 +22,6 @@ pub struct InitChunk {
     // Optional
     pub aliases: Vec<TransportAddress>,
     pub cookie_preservative: Option<Duration>,
-    pub ecn_capable: Option<bool>,
     pub supported_addr_types: Option<SupportedAddrTypes>,
 }
 
@@ -47,7 +46,6 @@ impl InitChunk {
 
             aliases: vec![],
             cookie_preservative: None,
-            ecn_capable: None,
             supported_addr_types: None,
         };
 
@@ -113,7 +111,21 @@ impl InitChunk {
         buf.put_u16(self.inbound_streams);
         buf.put_u32(self.initial_tsn);
 
-        // TODO params
+        for alias in &self.aliases {
+            match alias {
+                TransportAddress::Fake(_) => {}
+                TransportAddress::IpV4(addr) => Param::IpV4Addr(*addr).serialize(buf),
+                TransportAddress::IpV6(addr) => Param::IpV6Addr(*addr).serialize(buf),
+            }
+        }
+
+        if let Some(duration) = self.cookie_preservative {
+            Param::CookiePreservative(duration).serialize(buf);
+        }
+
+        if let Some(suppoert) = self.supported_addr_types {
+            Param::SupportedAddrTypes(suppoert).serialize(buf);
+        }
     }
 }
 
@@ -129,7 +141,6 @@ pub struct InitAck {
     pub unrecognized: Vec<UnrecognizedParam>,
     pub aliases: Vec<TransportAddress>,
     pub cookie_preservative: Option<Duration>,
-    pub ecn_capable: Option<bool>,
     pub supported_addr_types: Option<SupportedAddrTypes>,
 }
 
@@ -148,7 +159,6 @@ impl InitAck {
         let mut aliases = vec![];
         let mut unrecognized = vec![];
         let mut cookie_preservative = None;
-        let ecn_capable = None;
         let mut supported_addr_types = None;
 
         let mut cookie = None;
@@ -208,17 +218,19 @@ impl InitAck {
             aliases,
             unrecognized,
             cookie_preservative,
-            ecn_capable,
             supported_addr_types,
         })
+    }
+
+    pub fn serialized_size(&self) -> usize {
+        4 + 16 + 4 + self.cookie.serialized_size()
     }
 
     pub fn serialize(&self, buf: &mut impl BufMut) {
         // header
         buf.put_u8(2);
         buf.put_u8(0);
-        let serialized_cookie_size = self.cookie.serialized_size() as u16;
-        buf.put_u16(4 + 16 + 4 + serialized_cookie_size);
+        buf.put_u16(self.serialized_size() as u16);
 
         // value
         buf.put_u32(self.initiate_tag);
@@ -228,10 +240,26 @@ impl InitAck {
         buf.put_u32(self.initial_tsn);
 
         // cookie
-        buf.put_u16(7);
-        buf.put_u16(serialized_cookie_size);
-        self.cookie.serialize(buf);
+        self.cookie.serialize_as_param(buf);
 
-        // TODO params
+        for alias in &self.aliases {
+            match alias {
+                TransportAddress::Fake(_) => {}
+                TransportAddress::IpV4(addr) => Param::IpV4Addr(*addr).serialize(buf),
+                TransportAddress::IpV6(addr) => Param::IpV6Addr(*addr).serialize(buf),
+            }
+        }
+
+        for unrecognized in &self.unrecognized {
+            unrecognized.serialize_as_param(buf)
+        }
+
+        if let Some(duration) = self.cookie_preservative {
+            Param::CookiePreservative(duration).serialize(buf);
+        }
+
+        if let Some(suppoert) = self.supported_addr_types {
+            Param::SupportedAddrTypes(suppoert).serialize(buf);
+        }
     }
 }

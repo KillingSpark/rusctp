@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 
 use super::{cookie::StateCookie, SupportedAddrTypes, UnrecognizedParam};
 
@@ -17,13 +17,13 @@ pub enum Param {
     SupportedAddrTypes(SupportedAddrTypes),
 }
 
-const PARAM_IPV4_ADDR: u16 = 5;
-const PARAM_IPV6_ADDR: u16 = 6;
-const PARAM_STATE_COOKIE: u16 = 7;
-const PARAM_UNRECOGNIZED: u16 = 8;
-const PARAM_COOKIE_PRESERVATIVE: u16 = 9;
-const PARAM_HOSTNAME_DEPRECATED: u16 = 11;
-const PARAM_SUPPORTED_ADDRESSES: u16 = 12;
+pub(crate) const PARAM_IPV4_ADDR: u16 = 5;
+pub(crate) const PARAM_IPV6_ADDR: u16 = 6;
+pub(crate) const PARAM_STATE_COOKIE: u16 = 7;
+pub(crate) const PARAM_UNRECOGNIZED: u16 = 8;
+pub(crate) const PARAM_COOKIE_PRESERVATIVE: u16 = 9;
+pub(crate) const PARAM_HOSTNAME_DEPRECATED: u16 = 11;
+pub(crate) const PARAM_SUPPORTED_ADDRESSES: u16 = 12;
 
 pub enum ParseError {
     Unrecognized {
@@ -35,7 +35,7 @@ pub enum ParseError {
     Done,
 }
 
-const PARAM_HEADER_SIZE: usize = 4;
+pub(crate) const PARAM_HEADER_SIZE: usize = 4;
 
 impl Param {
     pub(crate) fn parse(data: &Bytes) -> (usize, Result<Self, ParseError>) {
@@ -52,7 +52,7 @@ impl Param {
         }
 
         let mut value = data.slice(PARAM_HEADER_SIZE..len);
-        let padded_len = usize::min(len + len % 4, data.len());
+        let padded_len = usize::min(padded_len(len), data.len());
 
         let chunk = match typ {
             PARAM_IPV4_ADDR => {
@@ -98,6 +98,71 @@ impl Param {
         };
         (padded_len, Ok(chunk))
     }
+
+    pub(crate) fn serialized_size(&self) -> usize {
+        match self {
+            Param::IpV4Addr(_) => 8,
+            Param::IpV6Addr(_) => 20,
+            Param::CookiePreservative(_) => 8,
+            Param::HostNameDeprecated => 0,
+            Param::SupportedAddrTypes(support) => {
+                let mut size = PARAM_HEADER_SIZE;
+                if support.ipv4 {
+                    size += 2;
+                }
+                if support.ipv6 {
+                    size += 2;
+                }
+                size
+            }
+            Param::StateCookie(cookie) => PARAM_HEADER_SIZE + cookie.serialized_size(),
+            Param::Unrecognized(p) => PARAM_HEADER_SIZE + p.data.len(),
+        }
+    }
+
+    pub(crate) fn serialize(&self, buf: &mut impl BufMut) {
+        match self {
+            Param::IpV4Addr(addr) => {
+                buf.put_u16(PARAM_IPV4_ADDR);
+                buf.put_u16(8);
+                buf.put_u32((*addr).into());
+            }
+            Param::IpV6Addr(addr) => {
+                buf.put_u16(PARAM_IPV6_ADDR);
+                buf.put_u16(20);
+                buf.put_u128((*addr).into());
+            }
+            Param::CookiePreservative(duration) => {
+                buf.put_u16(PARAM_COOKIE_PRESERVATIVE);
+                buf.put_u16(8);
+                buf.put_u32(duration.as_millis() as u32);
+            }
+            Param::HostNameDeprecated => { /* Nope */ }
+            Param::SupportedAddrTypes(support) => {
+                let size = self.serialized_size();
+                buf.put_u16(PARAM_SUPPORTED_ADDRESSES);
+                buf.put_u16(size as u16);
+                if support.ipv4 {
+                    buf.put_u16(PARAM_IPV4_ADDR);
+                }
+                if support.ipv6 {
+                    buf.put_u16(PARAM_IPV6_ADDR);
+                }
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
+            }
+            Param::StateCookie(cookie) => cookie.serialize_as_param(buf),
+            Param::Unrecognized(p) => p.serialize_as_param(buf),
+        }
+    }
+}
+
+pub fn padding_needed(size: usize) -> usize {
+    (4 - size % 4) % 4
+}
+
+fn padded_len(size: usize) -> usize {
+    ((size + 3) / 4) * 4
 }
 
 fn parse_error(typ: u16, data: Bytes) -> ParseError {

@@ -32,22 +32,15 @@ impl Sctp {
             },
         );
 
-        let init_chunk = Chunk::Init(InitChunk {
-            initiate_tag: 0,
-            a_rwnd: 1500,
-            outbound_streams: 1,
-            inbound_streams: 1,
-            initial_tsn: 1337,
-
-            aliases: vec![],
-            cookie_preservative: None,
-            ecn_capable: None,
-            supported_addr_types: None,
-        });
+        let init_chunk = Chunk::Init(self.create_init_chunk());
 
         let packet = Packet::new(peer_port, local_port, 1337 /* TODO */);
         self.send_immediate
             .push_back((peer_addr, packet, init_chunk))
+    }
+
+    fn create_init_chunk(&self) -> InitChunk {
+        todo!()
     }
 
     /// Returns true if the packet should not be processed further

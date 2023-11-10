@@ -6,6 +6,9 @@ use bytes::Bytes;
 
 use crate::TransportAddress;
 
+use super::param::PARAM_STATE_COOKIE;
+use super::param::padding_needed;
+
 pub enum StateCookie {
     Ours(Cookie),
     Opaque(Bytes),
@@ -30,7 +33,16 @@ impl StateCookie {
         todo!()
     }
 
-    pub fn serialize(&self, _buf: &mut impl BufMut) -> usize {
+    pub fn serialize_as_param(&self, buf: &mut impl BufMut) {
+        let size = self.serialized_size();
+        buf.put_u16(PARAM_STATE_COOKIE);
+        buf.put_u16(size as u16);
+        self.serialize(buf);
+        // maybe padding is needed
+        buf.put_bytes(0, padding_needed(size));
+    }
+
+    pub fn serialize(&self, _buf: &mut impl BufMut) {
         todo!()
     }
 

@@ -5,7 +5,7 @@ use crate::TransportAddress;
 use self::{
     cookie::{Cookie, StateCookie},
     data::DataChunk,
-    init::{InitAck, InitChunk},
+    init::{InitAck, InitChunk}, param::{PARAM_UNRECOGNIZED, padding_needed, PARAM_HEADER_SIZE},
 };
 
 pub mod cookie;
@@ -102,12 +102,23 @@ pub struct UnrecognizedParam {
     pub data: Bytes,
 }
 
+impl UnrecognizedParam {
+    pub fn serialize_as_param(&self, buf: &mut impl BufMut) {
+        buf.put_u16(PARAM_UNRECOGNIZED);
+        buf.put_u16((PARAM_HEADER_SIZE + self.data.len()) as u16);
+        buf.put_slice(&self.data);
+        // maybe padding is needed
+        buf.put_bytes(0, padding_needed(self.data.len()));
+    }
+}
+
 pub enum ParseError {
     Unrecognized { report: bool, stop: bool },
     IllegalFormat,
     Done,
 }
 
+#[derive(Clone, Copy)]
 pub struct SupportedAddrTypes {
     ipv4: bool,
     ipv6: bool,
