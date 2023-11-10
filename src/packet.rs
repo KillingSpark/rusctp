@@ -248,7 +248,7 @@ fn parse_error(typ: u8) -> ParseError {
             report: false,
         },
         3 => ParseError::Unrecognized {
-            stop: true,
+            stop: false,
             report: true,
         },
         _ => unreachable!("This can onlyy have 4 values"),

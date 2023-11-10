@@ -29,6 +29,7 @@ pub enum ParseError {
     Unrecognized {
         report: bool,
         stop: bool,
+        typ: u16,
         data: Bytes,
     },
     IllegalFormat,
@@ -166,27 +167,31 @@ fn padded_len(size: usize) -> usize {
 }
 
 fn parse_error(typ: u16, data: Bytes) -> ParseError {
+    let stop;
+    let report;
     match typ >> 14 {
-        0 => ParseError::Unrecognized {
-            stop: true,
-            report: false,
-            data,
-        },
-        1 => ParseError::Unrecognized {
-            stop: true,
-            report: true,
-            data,
-        },
-        2 => ParseError::Unrecognized {
-            stop: false,
-            report: false,
-            data,
-        },
-        3 => ParseError::Unrecognized {
-            stop: true,
-            report: true,
-            data,
-        },
+        0 => {
+            stop = true;
+            report = false;
+        }
+        1 => {
+            stop = true;
+            report = true;
+        }
+        2 => {
+            stop = false;
+            report = false;
+        }
+        3 => {
+            stop = false;
+            report = true;
+        }
         _ => unreachable!("This can onlyy have 4 values"),
+    }
+    ParseError::Unrecognized {
+        report,
+        stop,
+        typ,
+        data,
     }
 }

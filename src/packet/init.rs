@@ -19,6 +19,8 @@ pub struct InitChunk {
     pub inbound_streams: u16,
     pub initial_tsn: u32,
 
+    pub unrecognized: Vec<UnrecognizedParam>,
+
     // Optional
     pub aliases: Vec<TransportAddress>,
     pub cookie_preservative: Option<Duration>,
@@ -43,6 +45,8 @@ impl InitChunk {
             outbound_streams: nos,
             inbound_streams: nis,
             initial_tsn: init_tsn,
+
+            unrecognized: vec![],
 
             aliases: vec![],
             cookie_preservative: None,
@@ -79,13 +83,17 @@ impl InitChunk {
                 Err(ParseError::IllegalFormat) => {
                     break;
                 }
-                Err(ParseError::Unrecognized { report, stop, data }) => {
+                Err(ParseError::Unrecognized {
+                    report,
+                    stop,
+                    data,
+                    typ,
+                }) => {
                     if stop {
                         break;
                     }
                     if report {
-                        _ = data;
-                        // TODO report data back
+                        this.unrecognized.push(UnrecognizedParam { typ, data })
                     }
                 }
             }
@@ -190,12 +198,18 @@ impl InitAck {
                 Err(ParseError::IllegalFormat) => {
                     break;
                 }
-                Err(ParseError::Unrecognized { report, stop, data }) => {
+                Err(ParseError::Unrecognized {
+                    report,
+                    stop,
+                    data,
+                    typ,
+                }) => {
                     if stop {
                         break;
                     }
                     if report {
                         _ = data;
+                        _ = typ;
                         // TODO report data back
                     }
                 }

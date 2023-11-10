@@ -4,7 +4,7 @@ use crate::{
     packet::{
         cookie::{Cookie, StateCookie},
         init::{InitAck, InitChunk},
-        Chunk, Packet,
+        Chunk, Packet, UnrecognizedParam,
     },
     AssocAlias, AssocId, PerAssocInfo, Sctp, TransportAddress, WaitInitAck,
 };
@@ -159,7 +159,7 @@ impl Sctp {
                 peer_verification_tag: init.initiate_tag,
                 mac,
             });
-            let init_ack = Chunk::InitAck(self.create_init_ack(cookie));
+            let init_ack = Chunk::InitAck(self.create_init_ack(init.unrecognized, cookie));
             self.send_immediate.push_back((
                 from,
                 Packet::new(packet.to(), packet.from(), init.initiate_tag),
@@ -172,7 +172,8 @@ impl Sctp {
         }
     }
 
-    fn create_init_ack(&self, _cookie: StateCookie) -> InitAck {
+    fn create_init_ack(&self, unrecognized: Vec<UnrecognizedParam>, _cookie: StateCookie) -> InitAck {
+        _ = unrecognized;
         unimplemented!()
     }
 
