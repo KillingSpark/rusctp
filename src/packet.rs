@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, Buf};
 
 use crate::TransportAddress;
 
@@ -51,7 +51,7 @@ impl Packet {
         })
     }
 
-    pub fn serialize(&self, buf: &mut impl BufMut, chunks: &Bytes) {
+    pub fn serialize(&self, buf: &mut impl BufMut, mut chunks: impl Buf) {
         buf.put_u16(self.from);
         buf.put_u16(self.to);
         buf.put_u32(self.verification_tag);
@@ -62,7 +62,14 @@ impl Packet {
         digest.update(&self.to.to_be_bytes());
         digest.update(&self.verification_tag.to_be_bytes());
         digest.update(&[0, 0, 0, 0]);
-        digest.update(chunks);
+        while chunks.has_remaining() {
+            let chunk = chunks.chunk();
+            if chunk.is_empty() {
+                break;
+            }
+            digest.update(chunk);
+            chunks.advance(chunk.len());
+        }
 
         buf.put_u32(digest.finalize());
     }
