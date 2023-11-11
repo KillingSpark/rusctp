@@ -22,6 +22,8 @@ pub struct Cookie {
     pub aliases: Vec<TransportAddress>,
     pub local_verification_tag: u32,
     pub peer_verification_tag: u32,
+    pub local_initial_tsn: u32,
+    pub peer_initial_tsn: u32,
 }
 
 impl StateCookie {

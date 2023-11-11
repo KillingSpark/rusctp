@@ -1,13 +1,10 @@
-use bytes::{BufMut, Bytes, Buf};
-
-use crate::TransportAddress;
-
 use self::{
-    cookie::{Cookie, StateCookie},
+    cookie::StateCookie,
     data::DataChunk,
     init::{InitAck, InitChunk},
     param::{padding_needed, PARAM_HEADER_SIZE, PARAM_UNRECOGNIZED},
 };
+use bytes::{Buf, BufMut, Bytes};
 
 pub mod cookie;
 pub mod data;
@@ -218,15 +215,7 @@ impl Chunk {
             CHUNK_SHUTDOWN => Chunk::ShutDown,
             CHUNK_SHUTDOWN_ACK => Chunk::ShutDownAck,
             CHUNK_OP_ERROR => Chunk::OpError,
-            CHUNK_STATE_COOKIE => Chunk::StateCookie(StateCookie::Ours(Cookie {
-                aliases: vec![],
-                init_address: TransportAddress::Fake(100),
-                peer_port: 10,
-                local_port: 10,
-                mac: 100,
-                local_verification_tag: 1337,
-                peer_verification_tag: 1337,
-            })),
+            CHUNK_STATE_COOKIE => Chunk::StateCookie(StateCookie::Opaque(value)),
             CHUNK_STATE_COOKIE_ACK => Chunk::StateCookieAck,
             CHUNK_RESERVED_ECNE => Chunk::_ReservedECNE,
             CHUNK_RESERVED_CWR => Chunk::_ReservedCWR,

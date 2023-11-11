@@ -20,15 +20,18 @@ impl Association {
         peer_verification_tag: u32,
         local_port: u16,
         peer_port: u16,
+        init_local_tsn: u32,
+        init_peer_tsn: u32,
     ) -> Self {
         Self {
-            rx: AssociationRx::new(id),
+            rx: AssociationRx::new(id, init_peer_tsn),
             tx: AssociationTx::new(
                 id,
                 primary_path,
                 peer_verification_tag,
                 local_port,
                 peer_port,
+                init_local_tsn,
             ),
         }
     }

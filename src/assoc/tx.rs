@@ -1,5 +1,7 @@
 use std::{collections::VecDeque, time::Instant};
 
+use bytes::Buf;
+
 use crate::packet::data::DataChunk;
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 
@@ -14,6 +16,7 @@ pub struct AssociationTx {
     send_next: VecDeque<Chunk>,
 
     timeout: Option<Instant>,
+    tsn_counter: u32,
 }
 
 pub enum TxNotification {
@@ -29,6 +32,7 @@ impl AssociationTx {
         peer_verification_tag: u32,
         local_port: u16,
         peer_port: u16,
+        init_tsn: u32,
     ) -> Self {
         Self {
             id,
@@ -41,6 +45,7 @@ impl AssociationTx {
             send_next: VecDeque::new(),
 
             timeout: None,
+            tsn_counter: init_tsn,
         }
     }
 
@@ -97,10 +102,35 @@ impl AssociationTx {
     // Collect next chunk if it would still fit inside the limit
     pub fn poll_data_to_send(&mut self, limit: usize) -> Option<DataChunk> {
         if self.out_queue.front()?.serialized_size() < limit {
-            self.out_queue.pop_front()
+            let mut packet = self.out_queue.pop_front()?;
+            packet.tsn = self.tsn_counter;
+            self.tsn_counter += 1;
+            packet.end = true;
+            Some(packet)
         } else {
-            // TODO fragment the datachunk
-            None
+            let fragment_data_len = limit - 16;
+            if fragment_data_len == 0 {
+                return None;
+            }
+
+            let full_packet = self.out_queue.front_mut()?;
+            let fragment = DataChunk {
+                tsn: self.tsn_counter,
+                stream_id: full_packet.stream_id,
+                stream_seq_num: full_packet.stream_seq_num,
+                ppid: full_packet.ppid,
+                buf: full_packet.buf.slice(0..fragment_data_len),
+
+                immediate: full_packet.immediate,
+                unordered: full_packet.unordered,
+                begin: full_packet.begin,
+                end: false,
+            };
+
+            self.tsn_counter += 1;
+            full_packet.begin = false;
+            full_packet.buf.advance(fragment_data_len);
+            Some(fragment)
         }
     }
 }

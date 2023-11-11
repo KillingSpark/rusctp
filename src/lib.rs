@@ -4,6 +4,7 @@ use bytes::{Buf, Bytes};
 pub mod assoc;
 use assoc::{Association, RxNotification, TxNotification};
 use packet::{Chunk, Packet, ParseError};
+use rand::rngs::ThreadRng;
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -28,11 +29,12 @@ pub struct AssocAlias {
 }
 struct PerAssocInfo {
     local_verification_tag: u32,
-    _peer_verification_tag: u32,
+    peer_verification_tag: u32,
 }
 
 struct WaitInitAck {
     local_verification_tag: u32,
+    local_initial_tsn: u32,
 }
 
 struct WaitCookieAck {
@@ -40,12 +42,18 @@ struct WaitCookieAck {
     peer_verification_tag: u32,
     aliases: Vec<TransportAddress>,
     original_address: TransportAddress,
+    local_initial_tsn: u32,
+    peer_initial_tsn: u32,
 }
 
-pub struct Settings {}
+pub struct Settings {
+    pub secret: Vec<u8>,
+}
 
 pub struct Sctp {
     assoc_id_gen: u64,
+    rand: ThreadRng,
+
     new_assoc: Option<Association>,
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
     aliases: HashMap<AssocAlias, AssocId>,
@@ -61,13 +69,15 @@ pub struct Sctp {
 }
 
 impl Sctp {
-    pub fn new(_settings: Settings) -> Self {
+    pub fn new(settings: Settings) -> Self {
         Self {
             assoc_id_gen: 1,
+            rand: ThreadRng::default(),
+
             new_assoc: None,
             assoc_infos: HashMap::new(),
             aliases: HashMap::new(),
-            cookie_secret: vec![1, 2, 3, 4], // TODO
+            cookie_secret: settings.secret,
 
             wait_init_ack: HashMap::new(),
             wait_cookie_ack: HashMap::new(),
@@ -113,10 +123,16 @@ impl Sctp {
         let Some(assoc_id) = assoc_id else {
             return;
         };
-        self.process_chunks(assoc_id, &packet, data);
+        self.process_chunks(assoc_id, from, &packet, data);
     }
 
-    fn process_chunks(&mut self, assoc_id: AssocId, packet: &Packet, mut data: Bytes) {
+    fn process_chunks(
+        &mut self,
+        assoc_id: AssocId,
+        from: TransportAddress,
+        packet: &Packet,
+        mut data: Bytes,
+    ) {
         let Some(assoc_info) = self.assoc_infos.get(&assoc_id) else {
             return;
         };
@@ -137,8 +153,18 @@ impl Sctp {
                             .push_back((assoc_id, RxNotification::Chunk(chunk)));
                     }
                 }
-                Err(ParseError::Unrecognized { stop, report: _ }) => {
-                    // TODO report if necessary
+                Err(ParseError::Unrecognized { stop, report }) => {
+                    if report {
+                        self.send_immediate.push_back((
+                            from,
+                            Packet::new(
+                                packet.to(),
+                                packet.from(),
+                                assoc_info.peer_verification_tag,
+                            ),
+                            Chunk::OpError,
+                        ))
+                    }
                     if stop {
                         break;
                     } else {

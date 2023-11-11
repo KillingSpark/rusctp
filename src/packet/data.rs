@@ -3,16 +3,16 @@ use bytes::{Buf, BufMut, Bytes};
 use super::CHUNK_DATA;
 
 pub struct DataChunk {
-    tsn: u32,
-    stream_id: u16,
-    stream_seq_num: u16,
-    ppid: u32,
+    pub tsn: u32,
+    pub stream_id: u16,
+    pub stream_seq_num: u16,
+    pub ppid: u32,
     pub(crate) buf: Bytes,
 
-    immediate: bool,
-    unordered: bool,
-    begin: bool,
-    end: bool,
+    pub immediate: bool,
+    pub unordered: bool,
+    pub begin: bool,
+    pub end: bool,
 }
 
 impl DataChunk {

@@ -9,6 +9,8 @@ pub struct AssociationRx {
     in_queue: VecDeque<DataChunk>,
 
     tx_notifications: VecDeque<TxNotification>,
+
+    tsn_counter: u32,
 }
 
 pub enum RxNotification {
@@ -16,12 +18,14 @@ pub enum RxNotification {
 }
 
 impl AssociationRx {
-    pub(crate) fn new(id: AssocId) -> Self {
+    pub(crate) fn new(id: AssocId, init_tsn: u32) -> Self {
         Self {
             id,
             in_queue: VecDeque::new(),
 
             tx_notifications: VecDeque::new(),
+
+            tsn_counter: init_tsn,
         }
     }
 
@@ -46,6 +50,9 @@ impl AssociationRx {
     ) -> Option<std::time::Instant> {
         match chunk {
             Chunk::Data(data) => {
+                if data.tsn != self.tsn_counter {
+                    // TODO reorder buffer
+                }
                 self.in_queue.push_back(data);
             }
             Chunk::SAck => self.tx_notifications.push_back(TxNotification::SAck),

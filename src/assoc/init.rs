@@ -1,4 +1,5 @@
 use bytes::{Buf, Bytes};
+use rand::RngCore;
 
 use crate::{
     packet::{
@@ -28,13 +29,14 @@ impl Sctp {
         self.wait_init_ack.insert(
             alias,
             WaitInitAck {
-                local_verification_tag: 1337, // TODO
+                local_verification_tag: self.rand.next_u32(),
+                local_initial_tsn: self.rand.next_u32(),
             },
         );
 
         let init_chunk = Chunk::Init(self.create_init_chunk());
 
-        let packet = Packet::new(peer_port, local_port, 1337 /* TODO */);
+        let packet = Packet::new(peer_port, local_port, self.rand.next_u32());
         self.send_immediate
             .push_back((peer_addr, packet, init_chunk))
     }
@@ -77,6 +79,8 @@ impl Sctp {
                     local_verification_tag: half_open.local_verification_tag,
                     aliases: init_ack.aliases,
                     original_address: from,
+                    local_initial_tsn: half_open.local_initial_tsn,
+                    peer_initial_tsn: init_ack.initial_tsn,
                 },
             );
             self.send_immediate.push_back((
@@ -115,6 +119,8 @@ impl Sctp {
                 &half_open.aliases,
                 half_open.local_verification_tag,
                 half_open.peer_verification_tag,
+                half_open.local_initial_tsn,
+                half_open.peer_initial_tsn,
             );
             Some(assoc_id)
         } else {
@@ -155,8 +161,10 @@ impl Sctp {
                 aliases: init.aliases,
                 peer_port: packet.from(),
                 local_port: packet.to(),
-                local_verification_tag: 1337, // TODO
+                local_verification_tag: self.rand.next_u32(),
                 peer_verification_tag: init.initiate_tag,
+                local_initial_tsn: self.rand.next_u32(),
+                peer_initial_tsn: init.initial_tsn,
                 mac,
             });
             let init_ack = Chunk::InitAck(self.create_init_ack(init.unrecognized, cookie));
@@ -219,12 +227,15 @@ impl Sctp {
             &cookie.aliases,
             cookie.local_verification_tag,
             cookie.peer_verification_tag,
+            cookie.local_initial_tsn,
+            cookie.peer_initial_tsn,
         );
         self.tx_notifications
             .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
         Some(assoc_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn make_new_assoc(
         &mut self,
         packet: &Packet,
@@ -232,13 +243,15 @@ impl Sctp {
         alias_addresses: &[TransportAddress],
         local_verification_tag: u32,
         peer_verification_tag: u32,
+        local_initial_tsn: u32,
+        peer_initial_tsn: u32,
     ) -> AssocId {
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
             assoc_id,
             PerAssocInfo {
                 local_verification_tag,
-                _peer_verification_tag: peer_verification_tag,
+                peer_verification_tag,
             },
         );
         let original_alias = AssocAlias {
@@ -258,6 +271,8 @@ impl Sctp {
             packet.verification_tag(),
             packet.to(),
             packet.from(),
+            local_initial_tsn,
+            peer_initial_tsn,
         ));
         assoc_id
     }

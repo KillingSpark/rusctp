@@ -89,11 +89,11 @@ impl InitChunk {
                     data,
                     typ,
                 }) => {
-                    if stop {
-                        break;
-                    }
                     if report {
                         this.unrecognized.push(UnrecognizedParam { typ, data })
+                    }
+                    if stop {
+                        break;
                     }
                 }
             }
@@ -103,7 +103,24 @@ impl InitChunk {
     }
 
     pub fn serialized_size(&self) -> usize {
-        4 + 16 /*  TODO params */
+        let mut size = 4 + 16;
+        for alias in &self.aliases {
+            match alias {
+                TransportAddress::Fake(_) => {}
+                TransportAddress::IpV4(addr) => size += Param::IpV4Addr(*addr).serialized_size(),
+                TransportAddress::IpV6(addr) => size += Param::IpV6Addr(*addr).serialized_size(),
+            }
+        }
+
+        if let Some(duration) = self.cookie_preservative {
+            size += Param::CookiePreservative(duration).serialized_size();
+        }
+
+        if let Some(suppoert) = self.supported_addr_types {
+            size += Param::SupportedAddrTypes(suppoert).serialized_size();
+        }
+
+        size
     }
 
     pub fn serialize(&self, buf: &mut impl BufMut) {
@@ -204,13 +221,13 @@ impl InitAck {
                     data,
                     typ,
                 }) => {
-                    if stop {
-                        break;
-                    }
                     if report {
                         _ = data;
                         _ = typ;
                         // TODO report data back
+                    }
+                    if stop {
+                        break;
                     }
                 }
             }
@@ -237,7 +254,24 @@ impl InitAck {
     }
 
     pub fn serialized_size(&self) -> usize {
-        4 + 16 + 4 + self.cookie.serialized_size()
+        let mut size = 4 + 16 + 4 + self.cookie.serialized_size();
+        for alias in &self.aliases {
+            match alias {
+                TransportAddress::Fake(_) => {}
+                TransportAddress::IpV4(addr) => size += Param::IpV4Addr(*addr).serialized_size(),
+                TransportAddress::IpV6(addr) => size += Param::IpV6Addr(*addr).serialized_size(),
+            }
+        }
+
+        if let Some(duration) = self.cookie_preservative {
+            size += Param::CookiePreservative(duration).serialized_size();
+        }
+
+        if let Some(suppoert) = self.supported_addr_types {
+            size += Param::SupportedAddrTypes(suppoert).serialized_size();
+        }
+
+        size
     }
 
     pub fn serialize(&self, buf: &mut impl BufMut) {
