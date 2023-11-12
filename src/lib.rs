@@ -11,7 +11,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum TransportAddress {
     IpV4(Ipv4Addr),
     IpV6(Ipv6Addr),

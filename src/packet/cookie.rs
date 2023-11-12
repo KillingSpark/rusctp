@@ -16,6 +16,7 @@ pub enum StateCookie {
     Opaque(Bytes),
 }
 
+#[derive(PartialEq, Debug)]
 pub struct Cookie {
     pub mac: u64,
     pub init_address: TransportAddress,
@@ -217,7 +218,7 @@ impl Cookie {
                 if data.remaining() < 16 {
                     return None;
                 }
-                TransportAddress::IpV4(data.get_u32().into())
+                TransportAddress::IpV6(data.get_u128().into())
             }
             _ => {
                 return None;
@@ -242,7 +243,7 @@ impl Cookie {
                     if data.remaining() < 16 {
                         return None;
                     }
-                    aliases.push(TransportAddress::IpV4(data.get_u32().into()));
+                    aliases.push(TransportAddress::IpV6(data.get_u128().into()));
                 }
                 _ => {
                     return None;
@@ -262,4 +263,31 @@ impl Cookie {
             aliases,
         })
     }
+}
+
+#[test]
+fn roundtrip() {
+    use bytes::BytesMut;
+
+    let cookie = Cookie {
+        mac: 0,
+        init_address: TransportAddress::Fake(12345),
+        peer_port: 12334,
+        local_port: 12335,
+        aliases: vec![
+            TransportAddress::Fake(12345),
+            TransportAddress::IpV4(12345.into()),
+            TransportAddress::IpV6(12345.into()),
+        ],
+        local_verification_tag: 1234,
+        peer_verification_tag: 5467,
+        local_initial_tsn: 9012,
+        peer_initial_tsn: 3456,
+    };
+
+    let mut buf = BytesMut::new();
+    cookie.serialize(&mut buf);
+    assert_eq!(buf.len(), cookie.serialized_size());
+    let parsed = Cookie::parse(buf.freeze()).unwrap();
+    assert_eq!(cookie, parsed);
 }
