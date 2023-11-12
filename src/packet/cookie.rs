@@ -51,7 +51,7 @@ impl StateCookie {
 
     pub fn serialize(&self, buf: &mut impl BufMut) {
         match self {
-            Self::Opaque(data) => buf.put_slice(&data),
+            Self::Opaque(data) => buf.put_slice(data),
             Self::Ours(cookie) => cookie.serialize(buf),
         }
     }
@@ -62,7 +62,7 @@ impl StateCookie {
             Self::Opaque(data) => {
                 *self = StateCookie::Ours(Cookie::parse(data.clone())?);
                 self.make_ours()
-            },
+            }
         }
     }
 }
@@ -197,32 +197,32 @@ impl Cookie {
         let local_verification_tag = data.get_u32();
         let peer_initial_tsn = data.get_u32();
         let local_initial_tsn = data.get_u32();
-        let init_address;
+
         let mut aliases = vec![];
 
-        match data.get_u8() {
+        let init_address = match data.get_u8() {
             0 => {
                 if data.remaining() < 8 {
                     return None;
                 }
-                init_address = TransportAddress::Fake(data.get_u64());
+                TransportAddress::Fake(data.get_u64())
             }
             1 => {
                 if data.remaining() < 4 {
                     return None;
                 }
-                init_address = TransportAddress::IpV4(data.get_u32().into());
+                TransportAddress::IpV4(data.get_u32().into())
             }
             2 => {
                 if data.remaining() < 16 {
                     return None;
                 }
-                init_address = TransportAddress::IpV4(data.get_u32().into());
+                TransportAddress::IpV4(data.get_u32().into())
             }
             _ => {
                 return None;
             }
-        }
+        };
 
         while data.remaining() > 5 {
             match data.get_u8() {
