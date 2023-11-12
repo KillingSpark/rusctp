@@ -149,14 +149,7 @@ impl Sctp {
                 // -> stop processing this
                 return true;
             }
-            let mac = Cookie::calc_mac(
-                from,
-                &init.aliases,
-                packet.from(),
-                packet.to(),
-                &self.cookie_secret,
-            );
-            let cookie = StateCookie::Ours(Cookie {
+            let mut cookie = Cookie {
                 init_address: from,
                 aliases: init.aliases,
                 peer_port: packet.from(),
@@ -165,8 +158,10 @@ impl Sctp {
                 peer_verification_tag: init.initiate_tag,
                 local_initial_tsn: self.rand.next_u32(),
                 peer_initial_tsn: init.initial_tsn,
-                mac,
-            });
+                mac: 0,
+            };
+            cookie.mac = cookie.calc_mac(&self.cookie_secret);
+            let cookie = StateCookie::Ours(cookie);
             let init_ack = Chunk::InitAck(self.create_init_ack(init.unrecognized, cookie));
             self.send_immediate.push_back((
                 from,
@@ -207,13 +202,7 @@ impl Sctp {
             return None;
         };
 
-        let calced_mac = Cookie::calc_mac(
-            cookie.init_address,
-            &cookie.aliases,
-            cookie.peer_port,
-            cookie.local_port,
-            &self.cookie_secret,
-        );
+        let calced_mac = cookie.calc_mac(&self.cookie_secret);
 
         if calced_mac != cookie.mac {
             // TODO maybe bail more drastically?
