@@ -214,7 +214,13 @@ fn roundtrip() {
         let mut buf = bytes::BytesMut::new();
         param.serialize(&mut buf);
         assert_eq!(buf.len(), padded_len(param.serialized_size()));
-        let (size, deserialized) = Param::parse(&buf.freeze());
+        let buf = buf.freeze();
+        let mut clone = buf.clone();
+        let _typ = clone.get_u16();
+        let size = clone.get_u16() as usize;
+        assert_eq!(param.serialized_size(), size);
+
+        let (size, deserialized) = Param::parse(&buf);
         assert_eq!(size, padded_len(param.serialized_size()));
 
         let mut deserialized = deserialized.unwrap();
