@@ -7,6 +7,7 @@ use bytes::{Buf, BufMut, Bytes};
 
 use super::{cookie::StateCookie, SupportedAddrTypes, UnrecognizedParam};
 
+#[derive(PartialEq, Debug)]
 pub enum Param {
     Unrecognized(UnrecognizedParam),
     StateCookie(StateCookie),
@@ -25,6 +26,7 @@ pub(crate) const PARAM_COOKIE_PRESERVATIVE: u16 = 9;
 pub(crate) const PARAM_HOSTNAME_DEPRECATED: u16 = 11;
 pub(crate) const PARAM_SUPPORTED_ADDRESSES: u16 = 12;
 
+#[derive(Debug)]
 pub enum ParseError {
     Unrecognized {
         report: bool,
@@ -53,24 +55,24 @@ impl Param {
         }
 
         let mut value = data.slice(PARAM_HEADER_SIZE..len);
-        let padded_len = usize::min(padded_len(len), data.len());
+        let actual_len = usize::min(padded_len(len), data.len());
 
         let chunk = match typ {
             PARAM_IPV4_ADDR => {
                 if value.len() != 4 {
-                    return (padded_len, Err(ParseError::IllegalFormat));
+                    return (actual_len, Err(ParseError::IllegalFormat));
                 }
                 Param::IpV4Addr(Ipv4Addr::from(value.get_u32()))
             }
             PARAM_IPV6_ADDR => {
                 if value.len() != 16 {
-                    return (padded_len, Err(ParseError::IllegalFormat));
+                    return (actual_len, Err(ParseError::IllegalFormat));
                 }
                 Param::IpV6Addr(Ipv6Addr::from(value.get_u128()))
             }
             PARAM_COOKIE_PRESERVATIVE => {
                 if value.len() != 4 {
-                    return (padded_len, Err(ParseError::IllegalFormat));
+                    return (actual_len, Err(ParseError::IllegalFormat));
                 }
                 Param::CookiePreservative(Duration::from_millis(value.get_u32() as u64))
             }
@@ -80,7 +82,7 @@ impl Param {
                     ipv4: false,
                     ipv6: false,
                 };
-                while value.len() > 2 {
+                while value.len() >= 2 {
                     match value.get_u16() {
                         PARAM_IPV4_ADDR => support.ipv4 = true,
                         PARAM_IPV6_ADDR => support.ipv6 = true,
@@ -90,14 +92,22 @@ impl Param {
                 Param::SupportedAddrTypes(support)
             }
             PARAM_STATE_COOKIE => Param::StateCookie(StateCookie::Opaque(value)),
-            PARAM_UNRECOGNIZED => Param::Unrecognized(UnrecognizedParam {
-                typ,
-                data: data.clone(),
-            }),
+            PARAM_UNRECOGNIZED => {
+                if value.len() < 4 {
+                    return (actual_len, Err(ParseError::IllegalFormat));
+                }
+                let mut clone = value.clone();
+                let typ = clone.get_u16();
+                let size = clone.get_u16() as usize;
+                if size != value.len() && padded_len(size) != value.len() {
+                    return (actual_len, Err(ParseError::IllegalFormat));
+                }
+                Param::Unrecognized(UnrecognizedParam { typ, data: value })
+            }
 
-            _ => return (padded_len, Err(parse_error(typ, data.clone()))),
+            _ => return (actual_len, Err(parse_error(typ, data.clone()))),
         };
-        (padded_len, Ok(chunk))
+        (actual_len, Ok(chunk))
     }
 
     pub(crate) fn serialized_size(&self) -> usize {
@@ -194,4 +204,67 @@ fn parse_error(typ: u16, data: Bytes) -> ParseError {
         typ,
         data,
     }
+}
+
+#[test]
+fn roundtrip() {
+    use crate::{packet::cookie::Cookie, TransportAddress};
+
+    fn roundtrip(param: Param) {
+        let mut buf = bytes::BytesMut::new();
+        param.serialize(&mut buf);
+        assert_eq!(buf.len(), padded_len(param.serialized_size()));
+        let (size, deserialized) = Param::parse(&buf.freeze());
+        assert_eq!(size, padded_len(param.serialized_size()));
+
+        let mut deserialized = deserialized.unwrap();
+        if matches!(param, Param::StateCookie(StateCookie::Ours(_))) {
+            if let Param::StateCookie(ref mut cookie) = deserialized {
+                cookie.make_ours().unwrap();
+            }
+        }
+        assert_eq!(param, deserialized);
+    }
+
+    roundtrip(Param::IpV4Addr(127001.into()));
+    roundtrip(Param::IpV6Addr(1234567.into()));
+    roundtrip(Param::CookiePreservative(Duration::from_millis(1000)));
+    roundtrip(Param::SupportedAddrTypes(SupportedAddrTypes {
+        ipv4: false,
+        ipv6: false,
+    }));
+    roundtrip(Param::SupportedAddrTypes(SupportedAddrTypes {
+        ipv4: true,
+        ipv6: false,
+    }));
+    roundtrip(Param::SupportedAddrTypes(SupportedAddrTypes {
+        ipv4: false,
+        ipv6: true,
+    }));
+    roundtrip(Param::SupportedAddrTypes(SupportedAddrTypes {
+        ipv4: true,
+        ipv6: true,
+    }));
+    roundtrip(Param::Unrecognized(UnrecognizedParam {
+        typ: 100,
+        data: Bytes::copy_from_slice(&[0, 100, 0, 4]),
+    }));
+    roundtrip(Param::StateCookie(StateCookie::Opaque(
+        Bytes::copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9]),
+    )));
+    roundtrip(Param::StateCookie(StateCookie::Ours(Cookie {
+        mac: 1234,
+        init_address: TransportAddress::IpV6(1234.into()),
+        peer_port: 1234,
+        local_port: 1234,
+        aliases: vec![
+            TransportAddress::Fake(1234),
+            TransportAddress::IpV4(1234.into()),
+            TransportAddress::IpV6(1234.into()),
+        ],
+        local_verification_tag: 1234,
+        peer_verification_tag: 1234,
+        local_initial_tsn: 1234,
+        peer_initial_tsn: 1234,
+    })));
 }

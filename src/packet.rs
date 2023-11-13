@@ -102,6 +102,7 @@ pub enum Chunk {
     ShutDownComplete,
 }
 
+#[derive(PartialEq, Debug)]
 pub struct UnrecognizedParam {
     pub typ: u16,
     pub data: Bytes,
@@ -123,7 +124,7 @@ pub enum ParseError {
     Done,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct SupportedAddrTypes {
     ipv4: bool,
     ipv6: bool,

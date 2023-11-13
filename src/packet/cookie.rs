@@ -11,6 +11,7 @@ use super::param::padding_needed;
 use super::param::PARAM_HEADER_SIZE;
 use super::param::PARAM_STATE_COOKIE;
 
+#[derive(PartialEq, Debug)]
 pub enum StateCookie {
     Ours(Cookie),
     Opaque(Bytes),
