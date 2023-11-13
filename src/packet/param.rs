@@ -172,7 +172,7 @@ pub fn padding_needed(size: usize) -> usize {
     (4 - size % 4) % 4
 }
 
-fn padded_len(size: usize) -> usize {
+pub fn padded_len(size: usize) -> usize {
     ((size + 3) / 4) * 4
 }
 

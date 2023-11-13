@@ -10,8 +10,9 @@ use crate::{
     TransportAddress,
 };
 
-use super::param::{Param, ParseError};
+use super::param::{padded_len, padding_needed, Param, ParseError, PARAM_HEADER_SIZE};
 
+#[derive(PartialEq, Debug)]
 pub struct InitChunk {
     pub initiate_tag: u32,
     pub a_rwnd: u32,
@@ -107,17 +108,21 @@ impl InitChunk {
         for alias in &self.aliases {
             match alias {
                 TransportAddress::Fake(_) => {}
-                TransportAddress::IpV4(addr) => size += Param::IpV4Addr(*addr).serialized_size(),
-                TransportAddress::IpV6(addr) => size += Param::IpV6Addr(*addr).serialized_size(),
+                TransportAddress::IpV4(addr) => {
+                    size += padded_len(Param::IpV4Addr(*addr).serialized_size())
+                }
+                TransportAddress::IpV6(addr) => {
+                    size += padded_len(Param::IpV6Addr(*addr).serialized_size())
+                }
             }
         }
 
         if let Some(duration) = self.cookie_preservative {
-            size += Param::CookiePreservative(duration).serialized_size();
+            size += padded_len(Param::CookiePreservative(duration).serialized_size());
         }
 
         if let Some(suppoert) = self.supported_addr_types {
-            size += Param::SupportedAddrTypes(suppoert).serialized_size();
+            size += padded_len(Param::SupportedAddrTypes(suppoert).serialized_size());
         }
 
         size
@@ -127,7 +132,8 @@ impl InitChunk {
         // header
         buf.put_u8(1);
         buf.put_u8(0);
-        buf.put_u16(self.serialized_size() as u16);
+        let size = self.serialized_size();
+        buf.put_u16(size as u16);
 
         // value
         buf.put_u32(self.initiate_tag);
@@ -151,9 +157,13 @@ impl InitChunk {
         if let Some(suppoert) = self.supported_addr_types {
             Param::SupportedAddrTypes(suppoert).serialize(buf);
         }
+
+        // maybe padding is needed
+        buf.put_bytes(0, padding_needed(size));
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub struct InitAck {
     pub initiate_tag: u32,
     pub a_rwnd: u32,
@@ -254,21 +264,29 @@ impl InitAck {
     }
 
     pub fn serialized_size(&self) -> usize {
-        let mut size = 4 + 16 + 4 + self.cookie.serialized_size();
+        let mut size = 4 + 16 + 4 + padded_len(self.cookie.serialized_size());
         for alias in &self.aliases {
             match alias {
                 TransportAddress::Fake(_) => {}
-                TransportAddress::IpV4(addr) => size += Param::IpV4Addr(*addr).serialized_size(),
-                TransportAddress::IpV6(addr) => size += Param::IpV6Addr(*addr).serialized_size(),
+                TransportAddress::IpV4(addr) => {
+                    size += padded_len(Param::IpV4Addr(*addr).serialized_size())
+                }
+                TransportAddress::IpV6(addr) => {
+                    size += padded_len(Param::IpV6Addr(*addr).serialized_size())
+                }
             }
         }
 
         if let Some(duration) = self.cookie_preservative {
-            size += Param::CookiePreservative(duration).serialized_size();
+            size += padded_len(Param::CookiePreservative(duration).serialized_size());
         }
 
-        if let Some(suppoert) = self.supported_addr_types {
-            size += Param::SupportedAddrTypes(suppoert).serialized_size();
+        if let Some(support) = self.supported_addr_types {
+            size += padded_len(Param::SupportedAddrTypes(support).serialized_size());
+        }
+
+        for unrecognized in &self.unrecognized {
+            size += padded_len(PARAM_HEADER_SIZE + unrecognized.data.len());
         }
 
         size
@@ -278,7 +296,8 @@ impl InitAck {
         // header
         buf.put_u8(2);
         buf.put_u8(0);
-        buf.put_u16(self.serialized_size() as u16);
+        let size = self.serialized_size();
+        buf.put_u16(size as u16);
 
         // value
         buf.put_u32(self.initiate_tag);
@@ -309,5 +328,8 @@ impl InitAck {
         if let Some(suppoert) = self.supported_addr_types {
             Param::SupportedAddrTypes(suppoert).serialize(buf);
         }
+
+        // maybe padding is needed
+        buf.put_bytes(0, padding_needed(size));
     }
 }

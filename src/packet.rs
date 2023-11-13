@@ -2,7 +2,7 @@ use self::{
     cookie::StateCookie,
     data::DataChunk,
     init::{InitAck, InitChunk},
-    param::{padding_needed, PARAM_HEADER_SIZE, PARAM_UNRECOGNIZED},
+    param::{padded_len, padding_needed, PARAM_HEADER_SIZE, PARAM_UNRECOGNIZED},
 };
 use bytes::{Buf, BufMut, Bytes};
 
@@ -84,6 +84,7 @@ impl Packet {
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub enum Chunk {
     Data(DataChunk),
     Init(init::InitChunk),
@@ -118,6 +119,7 @@ impl UnrecognizedParam {
     }
 }
 
+#[derive(Debug)]
 pub enum ParseError {
     Unrecognized { report: bool, stop: bool },
     IllegalFormat,
@@ -188,7 +190,7 @@ impl Chunk {
         }
 
         let value = data.slice(CHUNK_HEADER_SIZE..len);
-        let padded_len = usize::min(len + len % 4, data.len());
+        let padded_len = usize::min(padded_len(len), data.len());
 
         let chunk = match typ {
             CHUNK_DATA => {
@@ -230,6 +232,17 @@ impl Chunk {
         match self {
             Chunk::Data(data) => data.serialize(buf),
             Chunk::StateCookieAck => buf.put_slice(COOKIE_ACK_BYTES),
+            Chunk::Init(init) => init.serialize(buf),
+            Chunk::InitAck(ack) => ack.serialize(buf),
+            Chunk::StateCookie(cookie) => {
+                buf.put_u8(CHUNK_STATE_COOKIE);
+                buf.put_u8(0);
+                let size = cookie.serialized_size();
+                buf.put_u16((CHUNK_HEADER_SIZE + size) as u16);
+                cookie.serialize(buf);
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
+            }
             _ => unimplemented!(),
         }
     }
@@ -238,6 +251,9 @@ impl Chunk {
         match self {
             Chunk::Data(data) => data.serialized_size(),
             Chunk::StateCookieAck => COOKIE_ACK_BYTES.len(),
+            Chunk::Init(init) => init.serialized_size(),
+            Chunk::InitAck(ack) => ack.serialized_size(),
+            Chunk::StateCookie(cookie) => CHUNK_HEADER_SIZE + cookie.serialized_size(),
             _ => unimplemented!(),
         }
     }
@@ -267,4 +283,78 @@ fn parse_error(typ: u8) -> ParseError {
         },
         _ => unreachable!("This can onlyy have 4 values"),
     }
+}
+
+#[test]
+fn roundtrip() {
+    use crate::TransportAddress;
+    use std::time::Duration;
+
+    fn roundtrip(chunk: Chunk) {
+        let mut buf = bytes::BytesMut::new();
+        chunk.serialize(&mut buf);
+        assert_eq!(buf.len(), padded_len(chunk.serialized_size()));
+        let buf = buf.freeze();
+        let mut clone = buf.clone();
+        let _typ = clone.get_u16();
+        let size = clone.get_u16() as usize;
+        assert_eq!(chunk.serialized_size(), size);
+
+        let (size, deserialized) = Chunk::parse(&buf);
+        assert_eq!(size, padded_len(chunk.serialized_size()));
+
+        let deserialized = deserialized.unwrap();
+        assert_eq!(chunk, deserialized);
+    }
+
+    roundtrip(Chunk::Data(DataChunk {
+        tsn: 1234,
+        stream_id: 1234,
+        stream_seq_num: 1234,
+        ppid: 1234,
+        buf: Bytes::copy_from_slice(&[1, 2, 3, 4, 5, 6]),
+        immediate: true,
+        unordered: false,
+        begin: true,
+        end: false,
+    }));
+    roundtrip(Chunk::Init(InitChunk {
+        initiate_tag: 1234,
+        a_rwnd: 1234,
+        outbound_streams: 1234,
+        inbound_streams: 1234,
+        initial_tsn: 1234,
+        unrecognized: vec![], // intentionally won't get serialized
+        aliases: vec![TransportAddress::IpV4(10.into())],
+        cookie_preservative: Some(Duration::from_millis(400)),
+        supported_addr_types: Some(SupportedAddrTypes {
+            ipv4: true,
+            ipv6: false,
+        }),
+    }));
+
+    roundtrip(Chunk::InitAck(InitAck {
+        initiate_tag: 1234,
+        a_rwnd: 1234,
+        outbound_streams: 1234,
+        inbound_streams: 1234,
+        initial_tsn: 1234,
+        unrecognized: vec![UnrecognizedParam {
+            typ: 100,
+            data: Bytes::copy_from_slice(&[0, 100, 0, 4]),
+        }],
+        aliases: vec![TransportAddress::IpV4(10.into())],
+        cookie_preservative: Some(Duration::from_millis(400)),
+        supported_addr_types: Some(SupportedAddrTypes {
+            ipv4: true,
+            ipv6: false,
+        }),
+        cookie: StateCookie::Opaque(Bytes::copy_from_slice(&[100, 101, 102, 255, 0])),
+    }));
+
+    roundtrip(Chunk::StateCookie(StateCookie::Opaque(
+        Bytes::copy_from_slice(&[100, 101, 102, 255, 0]),
+    )));
+
+    roundtrip(Chunk::StateCookieAck);
 }

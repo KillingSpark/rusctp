@@ -1,7 +1,8 @@
 use bytes::{Buf, BufMut, Bytes};
 
-use super::CHUNK_DATA;
+use super::{param::padding_needed, CHUNK_DATA};
 
+#[derive(PartialEq, Debug)]
 pub struct DataChunk {
     pub tsn: u32,
     pub stream_id: u16,
@@ -35,7 +36,7 @@ impl DataChunk {
             stream_id,
             stream_seq_num,
             ppid,
-            buf: data.slice(12..),
+            buf: data,
 
             immediate,
             unordered,
@@ -53,7 +54,9 @@ impl DataChunk {
             // header
             buf.put_u8(CHUNK_DATA);
             buf.put_u8(self.serialize_flags());
-            buf.put_u16(self.serialized_size() as u16);
+
+            let size = self.serialized_size();
+            buf.put_u16(size as u16);
 
             // value
             buf.put_u32(self.tsn);
@@ -61,6 +64,9 @@ impl DataChunk {
             buf.put_u16(self.stream_seq_num);
             buf.put_u32(self.ppid);
             buf.put_slice(&self.buf);
+
+            // maybe padding is needed
+            buf.put_bytes(0, padding_needed(size));
         }
     }
 
