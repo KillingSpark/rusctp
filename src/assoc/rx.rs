@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::packet::data::DataChunk;
+use crate::packet::sack::SelectiveAck;
 use crate::{AssocId, Chunk};
 
 use super::TxNotification;
@@ -25,7 +26,7 @@ impl AssociationRx {
 
             tx_notifications: VecDeque::new(),
 
-            tsn_counter: init_tsn,
+            tsn_counter: init_tsn - 1,
         }
     }
 
@@ -50,10 +51,19 @@ impl AssociationRx {
     ) -> Option<std::time::Instant> {
         match chunk {
             Chunk::Data(data) => {
-                if data.tsn != self.tsn_counter {
+                if data.tsn != self.tsn_counter + 1 {
                     // TODO reorder buffer
                 }
+                self.tsn_counter += 1;
+
                 self.in_queue.push_back(data);
+                self.tx_notifications
+                    .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                        cum_tsn: self.tsn_counter,
+                        a_rwnd: 1024 * 100, // TODO
+                        blocks: vec![],
+                        duplicated_tsn: vec![],
+                    })))
             }
             Chunk::SAck(_) => self.tx_notifications.push_back(TxNotification::SAck),
             _ => {
