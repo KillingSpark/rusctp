@@ -13,6 +13,7 @@ pub mod init;
 pub mod param;
 pub mod sack;
 
+#[derive(Clone, Copy, Debug)]
 pub struct Packet {
     from: u16,
     to: u16,

@@ -9,6 +9,7 @@ mod init;
 use crate::{AssocId, TransportAddress};
 
 pub struct Association {
+    id: AssocId,
     rx: AssociationRx,
     tx: AssociationTx,
 }
@@ -24,6 +25,7 @@ impl Association {
         init_peer_tsn: u32,
     ) -> Self {
         Self {
+            id,
             rx: AssociationRx::new(id, init_peer_tsn),
             tx: AssociationTx::new(
                 id,
@@ -36,8 +38,16 @@ impl Association {
         }
     }
 
+    pub fn id(&self) -> AssocId {
+        self.id
+    }
+
     pub fn split(self) -> (AssociationRx, AssociationTx) {
         (self.rx, self.tx)
+    }
+
+    pub fn split_mut(&mut self) -> (&mut AssociationRx, &mut AssociationTx) {
+        (&mut self.rx, &mut self.tx)
     }
 
     pub fn tx(&self) -> &AssociationTx {

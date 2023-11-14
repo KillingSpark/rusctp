@@ -41,8 +41,18 @@ impl Sctp {
             .push_back((peer_addr, packet, init_chunk))
     }
 
-    fn create_init_chunk(&self) -> InitChunk {
-        todo!()
+    fn create_init_chunk(&mut self) -> InitChunk {
+        InitChunk {
+            initiate_tag: self.rand.next_u32(),
+            a_rwnd: 100 * 1024,    // TODO
+            outbound_streams: 100, // TODO
+            inbound_streams: 100,  // TODO
+            initial_tsn: self.rand.next_u32(),
+            unrecognized: vec![],
+            aliases: vec![],
+            cookie_preservative: None,
+            supported_addr_types: None,
+        }
     }
 
     /// Returns true if the packet should not be processed further
@@ -176,12 +186,22 @@ impl Sctp {
     }
 
     fn create_init_ack(
-        &self,
+        &mut self,
         unrecognized: Vec<UnrecognizedParam>,
-        _cookie: StateCookie,
+        cookie: StateCookie,
     ) -> InitAck {
-        _ = unrecognized;
-        unimplemented!()
+        InitAck {
+            initiate_tag: self.rand.next_u32(),
+            a_rwnd: 100 * 1024,    // TODO
+            outbound_streams: 100, // TODO
+            inbound_streams: 100,  //TODO
+            initial_tsn: self.rand.next_u32(),
+            cookie,
+            unrecognized,
+            aliases: vec![],
+            cookie_preservative: None,
+            supported_addr_types: None,
+        }
     }
 
     pub(crate) fn handle_cookie_echo(

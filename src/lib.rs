@@ -1,6 +1,6 @@
-mod packet;
 use bytes::{Buf, Bytes};
 
+pub mod packet;
 pub mod assoc;
 use assoc::{Association, RxNotification, TxNotification};
 use packet::{Chunk, Packet, ParseError};
@@ -186,5 +186,11 @@ impl Sctp {
     }
     pub fn tx_notifications(&mut self) -> impl Iterator<Item = (AssocId, TxNotification)> + '_ {
         self.tx_notifications.drain(..)
+    }
+    pub fn send_immediate(&mut self) -> impl Iterator<Item = (TransportAddress, Packet, Chunk)> + '_ {
+        self.send_immediate.drain(..)
+    }
+    pub fn new_assoc(&mut self) -> Option<Association> {
+        self.new_assoc.take()
     }
 }
