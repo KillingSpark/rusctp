@@ -1,7 +1,7 @@
 use bytes::{Buf, Bytes};
 
-pub mod packet;
 pub mod assoc;
+pub mod packet;
 use assoc::{Association, RxNotification, TxNotification};
 use packet::{Chunk, Packet, ParseError};
 use rand::rngs::ThreadRng;
@@ -187,7 +187,9 @@ impl Sctp {
     pub fn tx_notifications(&mut self) -> impl Iterator<Item = (AssocId, TxNotification)> + '_ {
         self.tx_notifications.drain(..)
     }
-    pub fn send_immediate(&mut self) -> impl Iterator<Item = (TransportAddress, Packet, Chunk)> + '_ {
+    pub fn send_immediate(
+        &mut self,
+    ) -> impl Iterator<Item = (TransportAddress, Packet, Chunk)> + '_ {
         self.send_immediate.drain(..)
     }
     pub fn new_assoc(&mut self) -> Option<Association> {
