@@ -3,6 +3,7 @@ use self::{
     data::DataChunk,
     init::{InitAck, InitChunk},
     param::{padded_len, padding_needed, PARAM_HEADER_SIZE, PARAM_UNRECOGNIZED},
+    sack::SelectiveAck,
 };
 use bytes::{Buf, BufMut, Bytes};
 
@@ -10,6 +11,7 @@ pub mod cookie;
 pub mod data;
 pub mod init;
 pub mod param;
+pub mod sack;
 
 pub struct Packet {
     from: u16,
@@ -89,7 +91,7 @@ pub enum Chunk {
     Data(DataChunk),
     Init(init::InitChunk),
     InitAck(init::InitAck),
-    SAck,
+    SAck(sack::SelectiveAck),
     HeartBeat,
     HeartBeatAck,
     Abort,
@@ -211,7 +213,12 @@ impl Chunk {
                 };
                 Chunk::InitAck(init)
             }
-            CHUNK_SACK => Chunk::SAck,
+            CHUNK_SACK => {
+                let Some(sack) = SelectiveAck::parse(value) else {
+                    return (padded_len, Err(ParseError::IllegalFormat));
+                };
+                Chunk::SAck(sack)
+            }
             CHUNK_HEARTBEAT => Chunk::HeartBeat,
             CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck,
             CHUNK_ABORT => Chunk::Abort,
@@ -243,6 +250,7 @@ impl Chunk {
                 // maybe padding is needed
                 buf.put_bytes(0, padding_needed(size));
             }
+            Chunk::SAck(sack) => sack.serialize(buf),
             _ => unimplemented!(),
         }
     }
@@ -254,6 +262,7 @@ impl Chunk {
             Chunk::Init(init) => init.serialized_size(),
             Chunk::InitAck(ack) => ack.serialized_size(),
             Chunk::StateCookie(cookie) => CHUNK_HEADER_SIZE + cookie.serialized_size(),
+            Chunk::SAck(sack) => sack.serialized_size(),
             _ => unimplemented!(),
         }
     }
@@ -357,4 +366,11 @@ fn roundtrip() {
     )));
 
     roundtrip(Chunk::StateCookieAck);
+
+    roundtrip(Chunk::SAck(SelectiveAck {
+        cum_tsn: 1234,
+        a_rwnd: 1234,
+        blocks: vec![(1, 2), (3, 4)],
+        duplicated_tsn: vec![1, 2, 3, 4],
+    }));
 }

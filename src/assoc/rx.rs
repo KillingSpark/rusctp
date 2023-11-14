@@ -55,7 +55,7 @@ impl AssociationRx {
                 }
                 self.in_queue.push_back(data);
             }
-            Chunk::SAck => self.tx_notifications.push_back(TxNotification::SAck),
+            Chunk::SAck(_) => self.tx_notifications.push_back(TxNotification::SAck),
             _ => {
                 todo!()
             }
