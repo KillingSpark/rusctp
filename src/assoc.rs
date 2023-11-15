@@ -23,10 +23,12 @@ impl Association {
         peer_port: u16,
         init_local_tsn: u32,
         init_peer_tsn: u32,
+        num_in_streams: u16,
+        num_out_streams: u16,
     ) -> Self {
         Self {
             id,
-            rx: AssociationRx::new(id, init_peer_tsn),
+            rx: AssociationRx::new(id, init_peer_tsn, num_in_streams),
             tx: AssociationTx::new(
                 id,
                 primary_path,
@@ -34,6 +36,7 @@ impl Association {
                 local_port,
                 peer_port,
                 init_local_tsn,
+                num_out_streams,
             ),
         }
     }

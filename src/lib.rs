@@ -44,13 +44,21 @@ struct WaitCookieAck {
     original_address: TransportAddress,
     local_initial_tsn: u32,
     peer_initial_tsn: u32,
+    local_in_streams: u16,
+    peer_in_streams: u16,
+    local_out_streams: u16,
+    peer_out_streams: u16,
 }
 
 pub struct Settings {
-    pub secret: Vec<u8>,
+    pub cookie_secret: Vec<u8>,
+    pub incoming_streams: u16,
+    pub outgoing_streams: u16,
 }
 
 pub struct Sctp {
+    settings: Settings,
+
     assoc_id_gen: u64,
     rand: ThreadRng,
 
@@ -61,8 +69,6 @@ pub struct Sctp {
     wait_init_ack: HashMap<AssocAlias, WaitInitAck>,
     wait_cookie_ack: HashMap<AssocAlias, WaitCookieAck>,
 
-    cookie_secret: Vec<u8>,
-
     tx_notifications: VecDeque<(AssocId, TxNotification)>,
     send_immediate: VecDeque<(TransportAddress, Packet, Chunk)>,
     rx_notifications: VecDeque<(AssocId, RxNotification)>,
@@ -71,13 +77,13 @@ pub struct Sctp {
 impl Sctp {
     pub fn new(settings: Settings) -> Self {
         Self {
+            settings,
             assoc_id_gen: 1,
             rand: ThreadRng::default(),
 
             new_assoc: None,
             assoc_infos: HashMap::new(),
             aliases: HashMap::new(),
-            cookie_secret: settings.secret,
 
             wait_init_ack: HashMap::new(),
             wait_cookie_ack: HashMap::new(),

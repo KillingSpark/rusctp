@@ -28,6 +28,8 @@ pub struct Cookie {
     pub peer_verification_tag: u32,
     pub local_initial_tsn: u32,
     pub peer_initial_tsn: u32,
+    pub incoming_streams: u16,
+    pub outgoing_streams: u16,
 }
 
 impl StateCookie {
@@ -81,6 +83,8 @@ impl Cookie {
             local_verification_tag,
             peer_initial_tsn,
             local_initial_tsn,
+            incoming_streams,
+            outgoing_streams,
             init_address,
             aliases,
         } = self;
@@ -93,12 +97,14 @@ impl Cookie {
         (*local_verification_tag).hash(&mut hasher);
         (*peer_initial_tsn).hash(&mut hasher);
         (*local_initial_tsn).hash(&mut hasher);
+        (*incoming_streams).hash(&mut hasher);
+        (*outgoing_streams).hash(&mut hasher);
         hasher.write(local_secret);
         hasher.finish()
     }
 
     pub fn serialized_size(&self) -> usize {
-        let mut size = 4 + 4 + 4 + 4 + 2 + 2 + 8;
+        let mut size = 4 + 4 + 4 + 4 + 2 + 2 + 8 + 2 + 2;
 
         match self.init_address {
             TransportAddress::Fake(_) => {
@@ -144,6 +150,8 @@ impl Cookie {
             local_verification_tag,
             peer_initial_tsn,
             local_initial_tsn,
+            incoming_streams,
+            outgoing_streams,
             init_address,
             aliases,
         } = self;
@@ -154,6 +162,8 @@ impl Cookie {
         buf.put_u32(*local_verification_tag);
         buf.put_u32(*peer_initial_tsn);
         buf.put_u32(*local_initial_tsn);
+        buf.put_u16(*incoming_streams);
+        buf.put_u16(*outgoing_streams);
 
         match init_address {
             TransportAddress::Fake(addr) => {
@@ -199,6 +209,8 @@ impl Cookie {
         let local_verification_tag = data.get_u32();
         let peer_initial_tsn = data.get_u32();
         let local_initial_tsn = data.get_u32();
+        let incoming_streams = data.get_u16();
+        let outgoing_streams = data.get_u16();
 
         let mut aliases = vec![];
 
@@ -260,6 +272,8 @@ impl Cookie {
             local_verification_tag,
             peer_initial_tsn,
             local_initial_tsn,
+            incoming_streams,
+            outgoing_streams,
             init_address,
             aliases,
         })
@@ -284,6 +298,8 @@ fn roundtrip() {
         peer_verification_tag: 5467,
         local_initial_tsn: 9012,
         peer_initial_tsn: 3456,
+        incoming_streams: 1234,
+        outgoing_streams: 1234,
     };
 
     let mut buf = BytesMut::new();

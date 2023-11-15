@@ -32,7 +32,9 @@ fn main() {
     let jserver = std::thread::spawn(move || {
         let mut server_ctx = Context {
             sctp: Sctp::new(Settings {
-                secret: b"oh boy a secret string".to_vec(),
+                cookie_secret: b"oh boy a secret string".to_vec(),
+                incoming_streams: 10,
+                outgoing_streams: 10,
             }),
             current_timeout: None,
             assocs: HashMap::new(),
@@ -56,7 +58,9 @@ fn main() {
     let jclient = std::thread::spawn(move || {
         let mut client_ctx = Context {
             sctp: Sctp::new(Settings {
-                secret: b"oh boy a secret string".to_vec(),
+                cookie_secret: b"oh boy a secret string".to_vec(),
+                incoming_streams: 10,
+                outgoing_streams: 10,
             }),
             current_timeout: None,
             assocs: HashMap::new(),
@@ -132,12 +136,18 @@ impl Context {
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let (rx, tx) = assoc.split_mut();
                 rx.notification(rx_notification, std::time::Instant::now());
+                if let Some(data) = rx.poll_data() {
+                    tx.send_data(data, 0, 0, false, false);
+                }
                 for tx_notification in rx.tx_notifications() {
                     tx.notification(tx_notification, std::time::Instant::now());
                     let packet = tx.packet_header();
                     if let Some(addr) = self.addrs.get(&tx.primary_path()) {
                         while let Some(signal) = tx.poll_signal_to_send(1024) {
                             send_to(&mut self.socket, *addr, packet, signal);
+                        }
+                        while let Some(data) = tx.poll_data_to_send(1024) {
+                            send_to(&mut self.socket, *addr, packet, Chunk::Data(data));
                         }
                     }
                 }
@@ -151,8 +161,15 @@ impl Context {
         self.sctp
             .receive_data(Bytes::copy_from_slice(data), fake_addr);
 
-        if let Some(assoc) = self.sctp.new_assoc() {
+        if let Some(mut assoc) = self.sctp.new_assoc() {
             eprintln!("{} got a new association", self.logname);
+            assoc.tx_mut().send_data(
+                Bytes::copy_from_slice(&b"This is cool data"[..]),
+                0,
+                0,
+                false,
+                false,
+            );
             self.assocs.insert(assoc.id(), assoc);
             self.addrs.insert(fake_addr, from);
         }

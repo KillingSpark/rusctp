@@ -91,6 +91,10 @@ impl Sctp {
                     original_address: from,
                     local_initial_tsn: half_open.local_initial_tsn,
                     peer_initial_tsn: init_ack.initial_tsn,
+                    local_in_streams: self.settings.incoming_streams,
+                    peer_in_streams: init_ack.inbound_streams,
+                    local_out_streams: self.settings.outgoing_streams,
+                    peer_out_streams: init_ack.outbound_streams,
                 },
             );
             self.send_immediate.push_back((
@@ -131,6 +135,8 @@ impl Sctp {
                 half_open.peer_verification_tag,
                 half_open.local_initial_tsn,
                 half_open.peer_initial_tsn,
+                u16::min(half_open.local_in_streams, half_open.peer_in_streams),
+                u16::min(half_open.local_out_streams, half_open.peer_out_streams),
             );
             Some(assoc_id)
         } else {
@@ -168,9 +174,11 @@ impl Sctp {
                 peer_verification_tag: init.initiate_tag,
                 local_initial_tsn: self.rand.next_u32(),
                 peer_initial_tsn: init.initial_tsn,
+                incoming_streams: u16::min(self.settings.incoming_streams, init.outbound_streams),
+                outgoing_streams: u16::min(self.settings.outgoing_streams, init.inbound_streams),
                 mac: 0,
             };
-            cookie.mac = cookie.calc_mac(&self.cookie_secret);
+            cookie.mac = cookie.calc_mac(&self.settings.cookie_secret);
             let cookie = StateCookie::Ours(cookie);
             let init_ack = Chunk::InitAck(self.create_init_ack(init.unrecognized, cookie));
             self.send_immediate.push_back((
@@ -222,7 +230,7 @@ impl Sctp {
             return None;
         };
 
-        let calced_mac = cookie.calc_mac(&self.cookie_secret);
+        let calced_mac = cookie.calc_mac(&self.settings.cookie_secret);
 
         if calced_mac != cookie.mac {
             // TODO maybe bail more drastically?
@@ -238,6 +246,8 @@ impl Sctp {
             cookie.peer_verification_tag,
             cookie.local_initial_tsn,
             cookie.peer_initial_tsn,
+            cookie.incoming_streams,
+            cookie.outgoing_streams,
         );
         self.tx_notifications
             .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
@@ -254,6 +264,8 @@ impl Sctp {
         peer_verification_tag: u32,
         local_initial_tsn: u32,
         peer_initial_tsn: u32,
+        incoming_streams: u16,
+        outgoing_streams: u16,
     ) -> AssocId {
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
@@ -282,6 +294,8 @@ impl Sctp {
             packet.from(),
             local_initial_tsn,
             peer_initial_tsn,
+            incoming_streams,
+            outgoing_streams,
         ));
         assoc_id
     }

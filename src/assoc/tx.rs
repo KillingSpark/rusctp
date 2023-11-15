@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, time::Instant};
 
-use bytes::Buf;
+use bytes::{Buf, Bytes};
 
 use crate::packet::data::DataChunk;
 use crate::{AssocId, Chunk, Packet, TransportAddress};
@@ -17,6 +17,13 @@ pub struct AssociationTx {
 
     timeout: Option<Instant>,
     tsn_counter: u32,
+
+    per_stream: Vec<PerStreamInfo>,
+}
+
+#[derive(Clone, Copy)]
+struct PerStreamInfo {
+    seqnum_ctr: u16,
 }
 
 pub enum TxNotification {
@@ -33,6 +40,7 @@ impl AssociationTx {
         local_port: u16,
         peer_port: u16,
         init_tsn: u32,
+        out_streams: u16,
     ) -> Self {
         Self {
             id,
@@ -46,6 +54,8 @@ impl AssociationTx {
 
             timeout: None,
             tsn_counter: init_tsn,
+
+            per_stream: vec![PerStreamInfo { seqnum_ctr: 0 }; out_streams as usize],
         }
     }
 
@@ -80,6 +90,31 @@ impl AssociationTx {
                 // TODO
             }
         }
+    }
+
+    pub fn send_data(
+        &mut self,
+        data: Bytes,
+        stream: u16,
+        ppid: u32,
+        immediate: bool,
+        unordered: bool,
+    ) {
+        let Some(stream_info) = self.per_stream.get_mut(stream as usize) else {
+            return;
+        };
+        self.out_queue.push_back(DataChunk {
+            tsn: 0,
+            stream_id: stream,
+            stream_seq_num: stream_info.seqnum_ctr,
+            ppid,
+            buf: data,
+            immediate,
+            unordered,
+            begin: true,
+            end: true,
+        });
+        stream_info.seqnum_ctr += 1;
     }
 
     pub fn packet_header(&self) -> Packet {

@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use bytes::Bytes;
+
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
 use crate::{AssocId, Chunk};
@@ -12,14 +14,22 @@ pub struct AssociationRx {
     tx_notifications: VecDeque<TxNotification>,
 
     tsn_counter: u32,
+
+    _per_stream: Vec<PerStreamInfo>,
 }
+
+#[derive(Clone, Copy)]
+struct PerStreamInfo {
+    _seqnum_ctr: u16,
+}
+
 
 pub enum RxNotification {
     Chunk(Chunk),
 }
 
 impl AssociationRx {
-    pub(crate) fn new(id: AssocId, init_tsn: u32) -> Self {
+    pub(crate) fn new(id: AssocId, init_tsn: u32, in_streams: u16) -> Self {
         Self {
             id,
             in_queue: VecDeque::new(),
@@ -27,6 +37,8 @@ impl AssociationRx {
             tx_notifications: VecDeque::new(),
 
             tsn_counter: init_tsn - 1,
+
+            _per_stream: vec![PerStreamInfo { _seqnum_ctr: 0 }; in_streams as usize],
         }
     }
 
@@ -71,5 +83,9 @@ impl AssociationRx {
             }
         }
         None
+    }
+
+    pub fn poll_data(&mut self) -> Option<Bytes> {
+        self.in_queue.pop_front().map(|d| d.buf)
     }
 }
