@@ -21,7 +21,7 @@ pub enum TransportAddress {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssocId(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct AssocAlias {
     peer_addr: TransportAddress,
     peer_port: u16,
@@ -100,6 +100,14 @@ impl Sctp {
         }
 
         if self.handle_init_ack(&packet, &mut data, from) {
+            return;
+        }
+
+        if self.handle_cookie_echo(&packet, &mut data).is_some() {
+            return;
+        }
+
+        if self.handle_cookie_ack(&packet, &mut data, from).is_some() {
             return;
         }
 

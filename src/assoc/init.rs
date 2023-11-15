@@ -36,7 +36,7 @@ impl Sctp {
 
         let init_chunk = Chunk::Init(self.create_init_chunk());
 
-        let packet = Packet::new(peer_port, local_port, self.rand.next_u32());
+        let packet = Packet::new(local_port, peer_port, self.rand.next_u32());
         self.send_immediate
             .push_back((peer_addr, packet, init_chunk))
     }
@@ -63,10 +63,10 @@ impl Sctp {
         from: TransportAddress,
     ) -> bool {
         if !Chunk::is_init_ack(data) {
-            return true;
+            return false;
         }
         let (size, Ok(chunk)) = Chunk::parse(data) else {
-            return true;
+            return false;
         };
         if let Chunk::InitAck(init_ack) = chunk {
             if size != data.len() {
@@ -110,7 +110,7 @@ impl Sctp {
         data: &mut Bytes,
         from: TransportAddress,
     ) -> Option<AssocId> {
-        if !Chunk::is_init_ack(data) {
+        if !Chunk::is_cookie_ack(data) {
             return None;
         }
         let (size, Ok(chunk)) = Chunk::parse(data) else {

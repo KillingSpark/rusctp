@@ -159,7 +159,7 @@ impl Chunk {
         if data.len() < CHUNK_HEADER_SIZE {
             false
         } else {
-            data[0] == 1
+            data[0] == CHUNK_INIT
         }
     }
 
@@ -167,7 +167,7 @@ impl Chunk {
         if data.len() < CHUNK_HEADER_SIZE {
             false
         } else {
-            data[0] == 2
+            data[0] == CHUNK_INIT_ACK
         }
     }
 
@@ -175,7 +175,15 @@ impl Chunk {
         if data.len() < CHUNK_HEADER_SIZE {
             false
         } else {
-            data[0] == 10
+            data[0] == CHUNK_STATE_COOKIE
+        }
+    }
+
+    pub fn is_cookie_ack(data: &[u8]) -> bool {
+        if data.len() < CHUNK_HEADER_SIZE {
+            false
+        } else {
+            data[0] == CHUNK_STATE_COOKIE_ACK
         }
     }
 
