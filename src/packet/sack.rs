@@ -12,7 +12,7 @@ pub struct SelectiveAck {
 
 impl SelectiveAck {
     pub fn parse(mut data: Bytes) -> Option<Self> {
-        if data.len() < CHUNK_HEADER_SIZE + 4 + 4 + 2 + 2 {
+        if data.len() < 4 + 4 + 2 + 2 {
             return None;
         }
         let cum_tsn = data.get_u32();

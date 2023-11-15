@@ -76,7 +76,7 @@ impl AssociationRx {
                         duplicated_tsn: vec![],
                     })))
             }
-            Chunk::SAck(_) => self.tx_notifications.push_back(TxNotification::SAck),
+            Chunk::SAck(sack) => self.tx_notifications.push_back(TxNotification::SAck(sack)),
             _ => {
                 todo!()
             }

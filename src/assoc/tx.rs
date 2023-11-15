@@ -3,6 +3,7 @@ use std::{collections::VecDeque, time::Instant};
 use bytes::{Buf, Bytes};
 
 use crate::packet::data::DataChunk;
+use crate::packet::sack::SelectiveAck;
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 
 pub struct AssociationTx {
@@ -28,7 +29,7 @@ struct PerStreamInfo {
 
 pub enum TxNotification {
     Send(Chunk),
-    SAck,
+    SAck(SelectiveAck),
     _PrimaryPathChanged(TransportAddress),
 }
 
@@ -86,8 +87,8 @@ impl AssociationTx {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
-            TxNotification::SAck => {
-                // TODO
+            TxNotification::SAck(sack) => {
+                eprintln!("Need to handle Ack: {sack:?}");
             }
         }
     }
