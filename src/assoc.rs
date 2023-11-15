@@ -15,6 +15,7 @@ pub struct Association {
 }
 
 impl Association {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: AssocId,
         primary_path: TransportAddress,
