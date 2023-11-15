@@ -174,11 +174,15 @@ impl Context {
                 false,
             );
             while let Some(data) = assoc.tx_mut().poll_data_to_send(1024) {
-                send_to(&mut self.socket, from, assoc.tx_mut().packet_header(), Chunk::Data(data));
+                send_to(
+                    &mut self.socket,
+                    from,
+                    assoc.tx_mut().packet_header(),
+                    Chunk::Data(data),
+                );
             }
             self.assocs.insert(assoc.id(), assoc);
             self.addrs.insert(fake_addr, from);
-            
         }
     }
 }

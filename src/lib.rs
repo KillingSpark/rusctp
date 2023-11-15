@@ -119,11 +119,11 @@ impl Sctp {
 
         // Either we have accepted a new association here
         let new_assoc_id = self.handle_cookie_echo(&packet, &mut data);
-        
+
         // Or we get an ack on an association we initiated
         let new_assoc_id =
-        new_assoc_id.or_else(|| self.handle_cookie_ack(&packet, &mut data, from));
-        
+            new_assoc_id.or_else(|| self.handle_cookie_ack(&packet, &mut data, from));
+
         // Or we need to look the ID up via the aliases
         let assoc_id = new_assoc_id.or_else(|| {
             let alias = AssocAlias {
@@ -133,13 +133,13 @@ impl Sctp {
             };
             self.aliases.get(&alias).copied()
         });
-        
+
         let Some(assoc_id) = assoc_id else {
             return;
         };
         self.process_chunks(assoc_id, from, &packet, data);
     }
-    
+
     fn process_chunks(
         &mut self,
         assoc_id: AssocId,
