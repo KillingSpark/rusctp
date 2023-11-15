@@ -26,28 +26,30 @@ impl Sctp {
             peer_port,
             local_port,
         };
+        let local_verification_tag = self.rand.next_u32();
+        let initial_tsn = self.rand.next_u32();
         self.wait_init_ack.insert(
             alias,
             WaitInitAck {
-                local_verification_tag: self.rand.next_u32(),
-                local_initial_tsn: self.rand.next_u32(),
+                local_verification_tag,
+                local_initial_tsn: initial_tsn,
             },
         );
 
-        let init_chunk = Chunk::Init(self.create_init_chunk());
+        let init_chunk = Chunk::Init(self.create_init_chunk(local_verification_tag, initial_tsn));
 
-        let packet = Packet::new(local_port, peer_port, self.rand.next_u32());
+        let packet = Packet::new(local_port, peer_port, 0);
         self.send_immediate
             .push_back((peer_addr, packet, init_chunk))
     }
 
-    fn create_init_chunk(&mut self) -> InitChunk {
+    fn create_init_chunk(&mut self, local_verification_tag: u32, initial_tsn: u32) -> InitChunk {
         InitChunk {
-            initiate_tag: self.rand.next_u32(),
-            a_rwnd: 100 * 1024,    // TODO
-            outbound_streams: 100, // TODO
-            inbound_streams: 100,  // TODO
-            initial_tsn: self.rand.next_u32(),
+            initiate_tag: local_verification_tag,
+            a_rwnd: 100 * 1024, // TODO
+            outbound_streams: self.settings.outgoing_streams,
+            inbound_streams: self.settings.outgoing_streams,
+            initial_tsn,
             unrecognized: vec![],
             aliases: vec![],
             cookie_preservative: None,
@@ -165,14 +167,16 @@ impl Sctp {
                 // -> stop processing this
                 return true;
             }
+            let initial_tsn = self.rand.next_u32();
+            let local_verification_tag = self.rand.next_u32();
             let mut cookie = Cookie {
                 init_address: from,
                 aliases: init.aliases,
                 peer_port: packet.from(),
                 local_port: packet.to(),
-                local_verification_tag: self.rand.next_u32(),
+                local_verification_tag,
                 peer_verification_tag: init.initiate_tag,
-                local_initial_tsn: self.rand.next_u32(),
+                local_initial_tsn: initial_tsn,
                 peer_initial_tsn: init.initial_tsn,
                 incoming_streams: u16::min(self.settings.incoming_streams, init.outbound_streams),
                 outgoing_streams: u16::min(self.settings.outgoing_streams, init.inbound_streams),
@@ -180,7 +184,12 @@ impl Sctp {
             };
             cookie.mac = cookie.calc_mac(&self.settings.cookie_secret);
             let cookie = StateCookie::Ours(cookie);
-            let init_ack = Chunk::InitAck(self.create_init_ack(init.unrecognized, cookie));
+            let init_ack = Chunk::InitAck(self.create_init_ack(
+                init.unrecognized,
+                cookie,
+                initial_tsn,
+                local_verification_tag,
+            ));
             self.send_immediate.push_back((
                 from,
                 Packet::new(packet.to(), packet.from(), init.initiate_tag),
@@ -197,13 +206,15 @@ impl Sctp {
         &mut self,
         unrecognized: Vec<UnrecognizedParam>,
         cookie: StateCookie,
+        initial_tsn: u32,
+        local_verification_tag: u32,
     ) -> InitAck {
         InitAck {
-            initiate_tag: self.rand.next_u32(),
+            initiate_tag: local_verification_tag,
             a_rwnd: 100 * 1024,    // TODO
             outbound_streams: 100, // TODO
             inbound_streams: 100,  //TODO
-            initial_tsn: self.rand.next_u32(),
+            initial_tsn,
             cookie,
             unrecognized,
             aliases: vec![],

@@ -150,7 +150,6 @@ impl Sctp {
         let Some(assoc_info) = self.assoc_infos.get(&assoc_id) else {
             return;
         };
-        
         if assoc_info.local_verification_tag != packet.verification_tag() {
             return;
         }
