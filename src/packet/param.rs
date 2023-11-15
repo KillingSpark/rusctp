@@ -272,5 +272,7 @@ fn roundtrip() {
         peer_verification_tag: 1234,
         local_initial_tsn: 1234,
         peer_initial_tsn: 1234,
+        incoming_streams: 1234,
+        outgoing_streams: 1234,
     })));
 }

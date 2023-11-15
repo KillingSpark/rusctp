@@ -23,7 +23,6 @@ struct PerStreamInfo {
     _seqnum_ctr: u16,
 }
 
-
 pub enum RxNotification {
     Chunk(Chunk),
 }
