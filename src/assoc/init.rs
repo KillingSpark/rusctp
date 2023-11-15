@@ -289,7 +289,7 @@ impl Sctp {
         self.new_assoc = Some(Association::new(
             assoc_id,
             init_address,
-            packet.verification_tag(),
+            peer_verification_tag,
             packet.to(),
             packet.from(),
             local_initial_tsn,

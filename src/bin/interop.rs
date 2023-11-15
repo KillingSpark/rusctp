@@ -135,14 +135,17 @@ impl Context {
         for (id, rx_notification) in self.sctp.rx_notifications() {
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let (rx, tx) = assoc.split_mut();
-                rx.notification(rx_notification, std::time::Instant::now());
-                if let Some(data) = rx.poll_data() {
-                    tx.send_data(data, 0, 0, false, false);
-                }
-                for tx_notification in rx.tx_notifications() {
-                    tx.notification(tx_notification, std::time::Instant::now());
+                if let Some(addr) = self.addrs.get(&tx.primary_path()) {
+                    rx.notification(rx_notification, std::time::Instant::now());
                     let packet = tx.packet_header();
-                    if let Some(addr) = self.addrs.get(&tx.primary_path()) {
+                    if let Some(data) = rx.poll_data() {
+                        tx.send_data(data, 0, 0, false, false);
+                        while let Some(data) = tx.poll_data_to_send(1024) {
+                            send_to(&mut self.socket, *addr, packet, Chunk::Data(data));
+                        }
+                    }
+                    for tx_notification in rx.tx_notifications() {
+                        tx.notification(tx_notification, std::time::Instant::now());
                         while let Some(signal) = tx.poll_signal_to_send(1024) {
                             send_to(&mut self.socket, *addr, packet, signal);
                         }
@@ -170,8 +173,12 @@ impl Context {
                 false,
                 false,
             );
+            while let Some(data) = assoc.tx_mut().poll_data_to_send(1024) {
+                send_to(&mut self.socket, from, assoc.tx_mut().packet_header(), Chunk::Data(data));
+            }
             self.assocs.insert(assoc.id(), assoc);
             self.addrs.insert(fake_addr, from);
+            
         }
     }
 }
