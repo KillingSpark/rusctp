@@ -14,6 +14,7 @@ pub struct AssociationTx {
     peer_port: u16,
 
     out_queue: VecDeque<DataChunk>,
+    resend_queue: VecDeque<DataChunk>,
     send_next: VecDeque<Chunk>,
 
     timeout: Option<Instant>,
@@ -22,6 +23,8 @@ pub struct AssociationTx {
     out_buffer_limit: usize,
     current_out_buffered: usize,
     per_stream: Vec<PerStreamInfo>,
+
+    peer_rcv_window: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -35,32 +38,46 @@ pub enum TxNotification {
     _PrimaryPathChanged(TransportAddress),
 }
 
+pub struct AssocTxSettings {
+    pub primary_path: TransportAddress,
+    pub peer_verification_tag: u32,
+    pub local_port: u16,
+    pub peer_port: u16,
+    pub init_tsn: u32,
+    pub out_streams: u16,
+    pub out_buffer_limit: usize,
+    pub peer_arwnd: u32,
+}
+
 impl AssociationTx {
-    pub(crate) fn new(
-        id: AssocId,
-        primary_path: TransportAddress,
-        peer_verification_tag: u32,
-        local_port: u16,
-        peer_port: u16,
-        init_tsn: u32,
-        out_streams: u16,
-        out_buffer_limit: usize,
-    ) -> Self {
+    pub(crate) fn new(id: AssocId, settings: AssocTxSettings) -> Self {
+        let AssocTxSettings {
+            primary_path,
+            peer_verification_tag,
+            local_port,
+            peer_port,
+            init_tsn,
+            out_streams,
+            out_buffer_limit,
+            peer_arwnd,
+        } = settings;
         Self {
             id,
             primary_path,
             peer_verification_tag,
             local_port,
             peer_port,
+            tsn_counter: init_tsn,
+            out_buffer_limit,
+            peer_rcv_window: peer_arwnd,
 
             out_queue: VecDeque::new(),
+            resend_queue: VecDeque::new(),
             send_next: VecDeque::new(),
 
             timeout: None,
-            tsn_counter: init_tsn,
 
             per_stream: vec![PerStreamInfo { seqnum_ctr: 0 }; out_streams as usize],
-            out_buffer_limit,
             current_out_buffered: 0,
         }
     }
@@ -93,7 +110,16 @@ impl AssociationTx {
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
             TxNotification::SAck(sack) => {
-                eprintln!("Need to handle Ack: {sack:?}");
+                self.peer_rcv_window = sack.a_rwnd;
+                while self
+                    .resend_queue
+                    .front()
+                    .map(|packet| packet.tsn <= sack.cum_tsn)
+                    .unwrap_or(false)
+                {
+                    let acked = self.resend_queue.pop_front().unwrap();
+                    self.current_out_buffered -= acked.buf.len();
+                }
             }
         }
     }
@@ -147,15 +173,21 @@ impl AssociationTx {
 
     // Collect next chunk if it would still fit inside the limit
     pub fn poll_data_to_send(&mut self, limit: usize) -> Option<DataChunk> {
-        if self.out_queue.front()?.serialized_size() < limit {
+        let front = self.out_queue.front()?;
+        let front_buf_len = front.buf.len();
+        let data_limit = limit - 16;
+        if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
+            return None;
+        }
+        let packet = if front_buf_len < data_limit {
             let mut packet = self.out_queue.pop_front()?;
             packet.tsn = self.tsn_counter;
             self.tsn_counter += 1;
             packet.end = true;
-            self.current_out_buffered -= packet.buf.len();
-            Some(packet)
+
+            packet
         } else {
-            let fragment_data_len = limit - 16;
+            let fragment_data_len = data_limit;
             if fragment_data_len == 0 {
                 return None;
             }
@@ -177,8 +209,120 @@ impl AssociationTx {
             self.tsn_counter += 1;
             full_packet.begin = false;
             full_packet.buf.advance(fragment_data_len);
-            self.current_out_buffered -= fragment.buf.len();
-            Some(fragment)
-        }
+            fragment
+        };
+        self.peer_rcv_window -= packet.buf.len() as u32;
+        self.resend_queue.push_back(packet.clone());
+        Some(packet)
     }
+}
+
+#[test]
+fn buffer_limits() {
+    let mut tx = AssociationTx::new(
+        AssocId(0),
+        AssocTxSettings {
+            primary_path: TransportAddress::Fake(0),
+            peer_verification_tag: 1234,
+            local_port: 1,
+            peer_port: 2,
+            init_tsn: 1,
+            out_streams: 1,
+            out_buffer_limit: 100,
+            peer_arwnd: 10000000,
+        },
+    );
+    let send_ten_bytes = |tx: &mut AssociationTx| {
+        tx.try_send_data(
+            Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            0,
+            0,
+            false,
+            false,
+        )
+    };
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    // This should now fail as the buffer is full
+    assert!(send_ten_bytes(&mut tx).is_some());
+
+    let packet = tx
+        .poll_data_to_send(100)
+        .expect("Should return the first packet");
+    assert!(send_ten_bytes(&mut tx).is_some());
+
+    tx.notification(
+        TxNotification::SAck(SelectiveAck {
+            cum_tsn: packet.tsn,
+            a_rwnd: 1000000, // Whatever we just want to have a big receive window here
+            blocks: vec![],
+            duplicated_tsn: vec![],
+        }),
+        std::time::Instant::now(),
+    );
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_some());
+}
+
+#[test]
+fn arwnd_limits() {
+    let mut tx = AssociationTx::new(
+        AssocId(0),
+        AssocTxSettings {
+            primary_path: TransportAddress::Fake(0),
+            peer_verification_tag: 1234,
+            local_port: 1,
+            peer_port: 2,
+            init_tsn: 1,
+            out_streams: 1,
+            out_buffer_limit: 100,
+            peer_arwnd: 20,
+        },
+    );
+    let send_ten_bytes = |tx: &mut AssociationTx| {
+        tx.try_send_data(
+            Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            0,
+            0,
+            false,
+            false,
+        )
+    };
+    // prep packets
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_none());
+
+    assert!(tx.poll_data_to_send(100).is_some());
+    assert!(tx.poll_data_to_send(100).is_some());
+    assert!(tx.poll_data_to_send(100).is_none());
+
+    tx.notification(
+        TxNotification::SAck(SelectiveAck {
+            cum_tsn: 100, // Whatever we dont care about out buffer size here
+            a_rwnd: 20,
+            blocks: vec![],
+            duplicated_tsn: vec![],
+        }),
+        std::time::Instant::now(),
+    );
+
+    assert!(tx.poll_data_to_send(100).is_some());
+    assert!(tx.poll_data_to_send(100).is_some());
+    assert!(tx.poll_data_to_send(100).is_none());
 }

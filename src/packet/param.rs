@@ -274,5 +274,6 @@ fn roundtrip() {
         peer_initial_tsn: 1234,
         incoming_streams: 1234,
         outgoing_streams: 1234,
+        peer_arwnd: 1234,
     })));
 }

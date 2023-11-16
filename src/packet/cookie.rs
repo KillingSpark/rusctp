@@ -30,6 +30,7 @@ pub struct Cookie {
     pub peer_initial_tsn: u32,
     pub incoming_streams: u16,
     pub outgoing_streams: u16,
+    pub peer_arwnd: u32,
 }
 
 impl StateCookie {
@@ -87,6 +88,7 @@ impl Cookie {
             outgoing_streams,
             init_address,
             aliases,
+            peer_arwnd,
         } = self;
 
         (*init_address).hash(&mut hasher);
@@ -99,12 +101,13 @@ impl Cookie {
         (*local_initial_tsn).hash(&mut hasher);
         (*incoming_streams).hash(&mut hasher);
         (*outgoing_streams).hash(&mut hasher);
+        (*peer_arwnd).hash(&mut hasher);
         hasher.write(local_secret);
         hasher.finish()
     }
 
     pub fn serialized_size(&self) -> usize {
-        let mut size = 4 + 4 + 4 + 4 + 2 + 2 + 8 + 2 + 2;
+        let mut size = 4 + 4 + 4 + 4 + 2 + 2 + 8 + 2 + 2 + 4;
 
         match self.init_address {
             TransportAddress::Fake(_) => {
@@ -154,6 +157,7 @@ impl Cookie {
             outgoing_streams,
             init_address,
             aliases,
+            peer_arwnd,
         } = self;
         buf.put_u64(*mac);
         buf.put_u16(*peer_port);
@@ -164,6 +168,7 @@ impl Cookie {
         buf.put_u32(*local_initial_tsn);
         buf.put_u16(*incoming_streams);
         buf.put_u16(*outgoing_streams);
+        buf.put_u32(*peer_arwnd);
 
         match init_address {
             TransportAddress::Fake(addr) => {
@@ -199,7 +204,7 @@ impl Cookie {
     }
 
     pub fn parse(mut data: Bytes) -> Option<Self> {
-        if data.remaining() < 29 {
+        if data.remaining() < 33 {
             return None;
         }
         let mac = data.get_u64();
@@ -211,6 +216,7 @@ impl Cookie {
         let local_initial_tsn = data.get_u32();
         let incoming_streams = data.get_u16();
         let outgoing_streams = data.get_u16();
+        let peer_arwnd = data.get_u32();
 
         let mut aliases = vec![];
 
@@ -276,6 +282,7 @@ impl Cookie {
             outgoing_streams,
             init_address,
             aliases,
+            peer_arwnd,
         })
     }
 }
@@ -300,6 +307,7 @@ fn roundtrip() {
         peer_initial_tsn: 3456,
         incoming_streams: 1234,
         outgoing_streams: 1234,
+        peer_arwnd: 1234,
     };
 
     let mut buf = BytesMut::new();

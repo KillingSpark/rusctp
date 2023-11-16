@@ -48,6 +48,7 @@ struct WaitCookieAck {
     peer_in_streams: u16,
     local_out_streams: u16,
     peer_out_streams: u16,
+    peer_arwnd: u32,
 }
 
 pub struct Settings {

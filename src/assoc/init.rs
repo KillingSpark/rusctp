@@ -10,7 +10,7 @@ use crate::{
     AssocAlias, AssocId, PerAssocInfo, Sctp, TransportAddress, WaitInitAck,
 };
 
-use super::{Association, TxNotification};
+use super::{AssocTxSettings, Association, TxNotification};
 
 // Code for actively initializing an association
 
@@ -97,6 +97,7 @@ impl Sctp {
                     peer_in_streams: init_ack.inbound_streams,
                     local_out_streams: self.settings.outgoing_streams,
                     peer_out_streams: init_ack.outbound_streams,
+                    peer_arwnd: init_ack.a_rwnd,
                 },
             );
             self.send_immediate.push_back((
@@ -129,16 +130,23 @@ impl Sctp {
                 peer_port: packet.from(),
                 local_port: packet.to(),
             })?;
+
             let assoc_id = self.make_new_assoc(
                 packet,
-                half_open.original_address,
                 &half_open.aliases,
                 half_open.local_verification_tag,
-                half_open.peer_verification_tag,
-                half_open.local_initial_tsn,
                 half_open.peer_initial_tsn,
                 u16::min(half_open.local_in_streams, half_open.peer_in_streams),
-                u16::min(half_open.local_out_streams, half_open.peer_out_streams),
+                AssocTxSettings {
+                    primary_path: half_open.original_address,
+                    peer_verification_tag: half_open.peer_verification_tag,
+                    local_port: packet.to(),
+                    peer_port: packet.from(),
+                    init_tsn: half_open.local_initial_tsn,
+                    out_streams: u16::min(half_open.local_out_streams, half_open.peer_out_streams),
+                    out_buffer_limit: self.settings.out_buffer_limit,
+                    peer_arwnd: half_open.peer_arwnd,
+                },
             );
             Some(assoc_id)
         } else {
@@ -180,6 +188,7 @@ impl Sctp {
                 peer_initial_tsn: init.initial_tsn,
                 incoming_streams: u16::min(self.settings.incoming_streams, init.outbound_streams),
                 outgoing_streams: u16::min(self.settings.outgoing_streams, init.inbound_streams),
+                peer_arwnd: init.a_rwnd,
                 mac: 0,
             };
             cookie.mac = cookie.calc_mac(&self.settings.cookie_secret);
@@ -251,14 +260,20 @@ impl Sctp {
         data.advance(size);
         let assoc_id = self.make_new_assoc(
             packet,
-            cookie.init_address,
             &cookie.aliases,
             cookie.local_verification_tag,
-            cookie.peer_verification_tag,
-            cookie.local_initial_tsn,
             cookie.peer_initial_tsn,
             cookie.incoming_streams,
-            cookie.outgoing_streams,
+            AssocTxSettings {
+                primary_path: cookie.init_address,
+                peer_verification_tag: cookie.peer_verification_tag,
+                local_port: cookie.local_port,
+                peer_port: cookie.peer_port,
+                init_tsn: cookie.local_initial_tsn,
+                out_streams: cookie.outgoing_streams,
+                out_buffer_limit: self.settings.out_buffer_limit,
+                peer_arwnd: cookie.peer_arwnd,
+            },
         );
         self.tx_notifications
             .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
@@ -269,25 +284,22 @@ impl Sctp {
     fn make_new_assoc(
         &mut self,
         packet: &Packet,
-        init_address: TransportAddress,
         alias_addresses: &[TransportAddress],
         local_verification_tag: u32,
-        peer_verification_tag: u32,
-        local_initial_tsn: u32,
         peer_initial_tsn: u32,
         incoming_streams: u16,
-        outgoing_streams: u16,
+        tx_settings: AssocTxSettings,
     ) -> AssocId {
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
             assoc_id,
             PerAssocInfo {
                 local_verification_tag,
-                peer_verification_tag,
+                peer_verification_tag: tx_settings.peer_verification_tag,
             },
         );
         let original_alias = AssocAlias {
-            peer_addr: init_address,
+            peer_addr: tx_settings.primary_path,
             peer_port: packet.from(),
             local_port: packet.to(),
         };
@@ -299,16 +311,10 @@ impl Sctp {
         }
         self.new_assoc = Some(Association::new(
             assoc_id,
-            init_address,
-            peer_verification_tag,
-            packet.to(),
-            packet.from(),
-            local_initial_tsn,
             peer_initial_tsn,
             incoming_streams,
-            outgoing_streams,
             self.settings.in_buffer_limit,
-            self.settings.out_buffer_limit,
+            tx_settings,
         ));
         assoc_id
     }

@@ -2,7 +2,7 @@ use bytes::{Buf, BufMut, Bytes};
 
 use super::{param::padding_needed, CHUNK_DATA};
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct DataChunk {
     pub tsn: u32,
     pub stream_id: u16,
