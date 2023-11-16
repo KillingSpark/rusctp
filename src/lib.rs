@@ -54,6 +54,8 @@ pub struct Settings {
     pub cookie_secret: Vec<u8>,
     pub incoming_streams: u16,
     pub outgoing_streams: u16,
+    pub in_buffer_limit: usize,
+    pub out_buffer_limit: usize,
 }
 
 pub struct Sctp {

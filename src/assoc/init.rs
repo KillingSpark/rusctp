@@ -307,6 +307,8 @@ impl Sctp {
             peer_initial_tsn,
             incoming_streams,
             outgoing_streams,
+            self.settings.in_buffer_limit,
+            self.settings.out_buffer_limit,
         ));
         assoc_id
     }

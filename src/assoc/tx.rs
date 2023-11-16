@@ -19,6 +19,8 @@ pub struct AssociationTx {
     timeout: Option<Instant>,
     tsn_counter: u32,
 
+    out_buffer_limit: usize,
+    current_out_buffered: usize,
     per_stream: Vec<PerStreamInfo>,
 }
 
@@ -42,6 +44,7 @@ impl AssociationTx {
         peer_port: u16,
         init_tsn: u32,
         out_streams: u16,
+        out_buffer_limit: usize,
     ) -> Self {
         Self {
             id,
@@ -57,6 +60,8 @@ impl AssociationTx {
             tsn_counter: init_tsn,
 
             per_stream: vec![PerStreamInfo { seqnum_ctr: 0 }; out_streams as usize],
+            out_buffer_limit,
+            current_out_buffered: 0,
         }
     }
 
@@ -93,17 +98,21 @@ impl AssociationTx {
         }
     }
 
-    pub fn send_data(
+    pub fn try_send_data(
         &mut self,
         data: Bytes,
         stream: u16,
         ppid: u32,
         immediate: bool,
         unordered: bool,
-    ) {
+    ) -> Option<Bytes> {
+        if self.current_out_buffered + data.len() > self.out_buffer_limit {
+            return Some(data);
+        }
         let Some(stream_info) = self.per_stream.get_mut(stream as usize) else {
-            return;
+            return Some(data);
         };
+        self.current_out_buffered += data.len();
         self.out_queue.push_back(DataChunk {
             tsn: 0,
             stream_id: stream,
@@ -116,6 +125,7 @@ impl AssociationTx {
             end: true,
         });
         stream_info.seqnum_ctr += 1;
+        None
     }
 
     pub fn packet_header(&self) -> Packet {
@@ -142,6 +152,7 @@ impl AssociationTx {
             packet.tsn = self.tsn_counter;
             self.tsn_counter += 1;
             packet.end = true;
+            self.current_out_buffered -= packet.buf.len();
             Some(packet)
         } else {
             let fragment_data_len = limit - 16;
@@ -166,6 +177,7 @@ impl AssociationTx {
             self.tsn_counter += 1;
             full_packet.begin = false;
             full_packet.buf.advance(fragment_data_len);
+            self.current_out_buffered -= fragment.buf.len();
             Some(fragment)
         }
     }

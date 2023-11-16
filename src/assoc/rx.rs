@@ -16,6 +16,7 @@ pub struct AssociationRx {
     tsn_counter: u32,
 
     _per_stream: Vec<PerStreamInfo>,
+    _in_buffer_limit: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -28,7 +29,7 @@ pub enum RxNotification {
 }
 
 impl AssociationRx {
-    pub(crate) fn new(id: AssocId, init_tsn: u32, in_streams: u16) -> Self {
+    pub(crate) fn new(id: AssocId, init_tsn: u32, in_streams: u16, in_buffer_limit: usize) -> Self {
         Self {
             id,
             in_queue: VecDeque::new(),
@@ -38,6 +39,8 @@ impl AssociationRx {
             tsn_counter: init_tsn - 1,
 
             _per_stream: vec![PerStreamInfo { _seqnum_ctr: 0 }; in_streams as usize],
+
+            _in_buffer_limit: in_buffer_limit,
         }
     }
 

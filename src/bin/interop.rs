@@ -35,6 +35,8 @@ fn main() {
                 cookie_secret: b"oh boy a secret string".to_vec(),
                 incoming_streams: 10,
                 outgoing_streams: 10,
+                in_buffer_limit: 100 * 1024,
+                out_buffer_limit: 100 * 1024,
             }),
             current_timeout: None,
             assocs: HashMap::new(),
@@ -61,6 +63,8 @@ fn main() {
                 cookie_secret: b"oh boy a secret string".to_vec(),
                 incoming_streams: 10,
                 outgoing_streams: 10,
+                in_buffer_limit: 100 * 1024,
+                out_buffer_limit: 100 * 1024,
             }),
             current_timeout: None,
             assocs: HashMap::new(),
@@ -139,7 +143,7 @@ impl Context {
                     rx.notification(rx_notification, std::time::Instant::now());
                     let packet = tx.packet_header();
                     if let Some(data) = rx.poll_data() {
-                        tx.send_data(data, 0, 0, false, false);
+                        tx.try_send_data(data, 0, 0, false, false);
                         while let Some(data) = tx.poll_data_to_send(1024) {
                             send_to(&mut self.socket, *addr, packet, Chunk::Data(data));
                         }
@@ -166,13 +170,15 @@ impl Context {
 
         if let Some(mut assoc) = self.sctp.new_assoc() {
             eprintln!("{} got a new association", self.logname);
-            assoc.tx_mut().send_data(
-                Bytes::copy_from_slice(&b"This is cool data"[..]),
-                0,
-                0,
-                false,
-                false,
-            );
+            assoc
+                .tx_mut()
+                .try_send_data(
+                    Bytes::copy_from_slice(&b"This is cool data"[..]),
+                    0,
+                    0,
+                    false,
+                    false,
+                );
             while let Some(data) = assoc.tx_mut().poll_data_to_send(1024) {
                 send_to(
                     &mut self.socket,
