@@ -170,15 +170,13 @@ impl Context {
 
         if let Some(mut assoc) = self.sctp.new_assoc() {
             eprintln!("{} got a new association", self.logname);
-            assoc
-                .tx_mut()
-                .try_send_data(
-                    Bytes::copy_from_slice(&b"This is cool data"[..]),
-                    0,
-                    0,
-                    false,
-                    false,
-                );
+            assoc.tx_mut().try_send_data(
+                Bytes::copy_from_slice(&b"This is cool data"[..]),
+                0,
+                0,
+                false,
+                false,
+            );
             while let Some(data) = assoc.tx_mut().poll_data_to_send(1024) {
                 send_to(
                     &mut self.socket,
