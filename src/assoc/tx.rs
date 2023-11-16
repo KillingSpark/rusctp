@@ -112,7 +112,11 @@ impl AssociationTx {
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
             TxNotification::SAck(sack) => {
-                self.peer_rcv_window = sack.a_rwnd;
+                let mut packet_acked = |acked: &DataChunk| {
+                    self.current_out_buffered -= acked.buf.len();
+                    self.current_in_flight -= acked.buf.len();
+                };
+
                 while self
                     .resend_queue
                     .front()
@@ -120,9 +124,23 @@ impl AssociationTx {
                     .unwrap_or(false)
                 {
                     let acked = self.resend_queue.pop_front().unwrap();
-                    self.current_out_buffered -= acked.buf.len();
-                    self.current_in_flight -= acked.buf.len();
+                    packet_acked(&acked);
                 }
+                for block in sack.blocks {
+                    let start = sack.cum_tsn + block.0 as u32;
+                    let end = sack.cum_tsn + block.1 as u32;
+
+                    let range = start..end + 1;
+                    self.resend_queue.retain(|packet| {
+                        if range.contains(&packet.tsn) {
+                            packet_acked(packet);
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
+                self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
             }
         }
     }
@@ -261,19 +279,27 @@ fn buffer_limits() {
     let packet = tx
         .poll_data_to_send(100)
         .expect("Should return the first packet");
-    assert_eq!(tx.current_in_flight, 10);
+    tx.poll_data_to_send(100)
+        .expect("Should return the second packet");
+    tx.poll_data_to_send(100)
+        .expect("Should return the third packet");
+
+    assert_eq!(tx.current_in_flight, 30);
+    assert!(send_ten_bytes(&mut tx).is_some());
+    assert!(send_ten_bytes(&mut tx).is_some());
     assert!(send_ten_bytes(&mut tx).is_some());
 
     tx.notification(
         TxNotification::SAck(SelectiveAck {
             cum_tsn: packet.tsn,
             a_rwnd: 1000000, // Whatever we just want to have a big receive window here
-            blocks: vec![],
+            blocks: vec![(2, 2)],
             duplicated_tsn: vec![],
         }),
         std::time::Instant::now(),
     );
-    assert_eq!(tx.current_in_flight, 0);
+    assert_eq!(tx.current_in_flight, 10);
+    assert!(send_ten_bytes(&mut tx).is_none());
     assert!(send_ten_bytes(&mut tx).is_none());
     assert!(send_ten_bytes(&mut tx).is_some());
 }
