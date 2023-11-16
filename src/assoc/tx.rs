@@ -22,6 +22,7 @@ pub struct AssociationTx {
 
     out_buffer_limit: usize,
     current_out_buffered: usize,
+    current_in_flight: usize,
     per_stream: Vec<PerStreamInfo>,
 
     peer_rcv_window: u32,
@@ -72,6 +73,7 @@ impl AssociationTx {
             peer_rcv_window: peer_arwnd,
 
             out_queue: VecDeque::new(),
+            current_in_flight: 0,
             resend_queue: VecDeque::new(),
             send_next: VecDeque::new(),
 
@@ -119,6 +121,7 @@ impl AssociationTx {
                 {
                     let acked = self.resend_queue.pop_front().unwrap();
                     self.current_out_buffered -= acked.buf.len();
+                    self.current_in_flight -= acked.buf.len();
                 }
             }
         }
@@ -212,6 +215,7 @@ impl AssociationTx {
             fragment
         };
         self.peer_rcv_window -= packet.buf.len() as u32;
+        self.current_in_flight += packet.buf.len();
         self.resend_queue.push_back(packet.clone());
         Some(packet)
     }
@@ -257,6 +261,7 @@ fn buffer_limits() {
     let packet = tx
         .poll_data_to_send(100)
         .expect("Should return the first packet");
+    assert_eq!(tx.current_in_flight, 10);
     assert!(send_ten_bytes(&mut tx).is_some());
 
     tx.notification(
@@ -268,6 +273,7 @@ fn buffer_limits() {
         }),
         std::time::Instant::now(),
     );
+    assert_eq!(tx.current_in_flight, 0);
     assert!(send_ten_bytes(&mut tx).is_none());
     assert!(send_ten_bytes(&mut tx).is_some());
 }
