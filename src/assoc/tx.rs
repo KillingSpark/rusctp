@@ -39,14 +39,15 @@ struct PerStreamInfo {
 enum CongestionState {
     SlowStart,
     _FastRecover,
-    _CongestionAvoidance,
+    _FastRetransmit,
+    CongestionAvoidance,
 }
 
 struct PerDestinationInfo {
-    _state: CongestionState,
-    _pcmds: usize,
+    state: CongestionState,
+    pcmds: usize,
     cwnd: usize,
-    _ssthresh: usize,
+    ssthresh: usize,
     _partial_bytes_acked: usize,
 }
 
@@ -54,16 +55,31 @@ impl PerDestinationInfo {
     fn new(pmtu: usize) -> Self {
         let pmcds = pmtu - 12;
         Self {
-            _state: CongestionState::SlowStart,
-            _pcmds: pmcds,
+            state: CongestionState::SlowStart,
+            pcmds: pmcds,
             cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
-            _ssthresh: usize::MAX,
+            ssthresh: usize::MAX,
             _partial_bytes_acked: 0,
         }
     }
 
     fn send_limit(&self, current_outstanding: usize) -> usize {
         self.cwnd.saturating_sub(current_outstanding)
+    }
+
+    fn bytes_acked(&mut self, bytes_acked: usize) {
+        match self.state {
+            CongestionState::SlowStart => {
+                self.cwnd += usize::max(bytes_acked, usize::min(self.pcmds, bytes_acked));
+                if self.cwnd >= self.ssthresh {
+                    self.state = CongestionState::CongestionAvoidance;
+                }
+            }
+            CongestionState::CongestionAvoidance => {
+                self.cwnd +=  usize::min(self.pcmds, bytes_acked);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -154,38 +170,44 @@ impl AssociationTx {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
-            TxNotification::SAck(sack) => {
-                let mut packet_acked = |acked: &DataChunk| {
-                    self.current_out_buffered -= acked.buf.len();
-                    self.current_in_flight -= acked.buf.len();
-                };
-
-                while self
-                    .resend_queue
-                    .front()
-                    .map(|packet| packet.tsn <= Tsn(sack.cum_tsn))
-                    .unwrap_or(false)
-                {
-                    let acked = self.resend_queue.pop_front().unwrap();
-                    packet_acked(&acked);
-                }
-                for block in sack.blocks {
-                    let start = sack.cum_tsn + block.0 as u32;
-                    let end = sack.cum_tsn + block.1 as u32;
-
-                    let range = start..end + 1;
-                    self.resend_queue.retain(|packet| {
-                        if range.contains(&packet.tsn.0) {
-                            packet_acked(packet);
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                }
-                self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
-            }
+            TxNotification::SAck(sack) => self.handle_sack(sack),
         }
+    }
+
+    pub fn handle_sack(&mut self, sack: SelectiveAck) {
+        let mut bytes_acked = 0;
+        let mut packet_acked = |acked: &DataChunk| {
+            self.current_out_buffered -= acked.buf.len();
+            self.current_in_flight -= acked.buf.len();
+            bytes_acked += acked.buf.len();
+        };
+
+        while self
+            .resend_queue
+            .front()
+            .map(|packet| packet.tsn <= Tsn(sack.cum_tsn))
+            .unwrap_or(false)
+        {
+            let acked = self.resend_queue.pop_front().unwrap();
+            packet_acked(&acked);
+        }
+        for block in sack.blocks {
+            // TODO these are only advisory, mark but don't delete them until cum_tsn has reached them
+            let start = sack.cum_tsn + block.0 as u32;
+            let end = sack.cum_tsn + block.1 as u32;
+
+            let range = start..end + 1;
+            self.resend_queue.retain(|packet| {
+                if range.contains(&packet.tsn.0) {
+                    packet_acked(packet);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
+        self.primary_congestion.bytes_acked(bytes_acked);
     }
 
     pub fn try_send_data(
