@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use bytes::Bytes;
 
@@ -15,6 +15,8 @@ pub struct AssociationRx {
     tsn_counter: u32,
 
     per_stream: Vec<PerStreamInfo>,
+    tsn_reorder_buffer: BTreeMap<u32, DataChunk>,
+
     in_buffer_limit: usize,
     current_in_buffer: usize,
 }
@@ -47,6 +49,7 @@ impl AssociationRx {
             tsn_counter: init_tsn - 1,
 
             per_stream: (0..in_streams).map(|_| PerStreamInfo::default()).collect(),
+            tsn_reorder_buffer: BTreeMap::new(),
 
             in_buffer_limit,
             current_in_buffer: 0,
@@ -74,44 +77,7 @@ impl AssociationRx {
     ) -> Option<std::time::Instant> {
         match chunk {
             Chunk::Data(data) => {
-                if data.tsn >= self.tsn_counter + 1 {
-                    // TODO this is wrong make a reorder buffer that also counts towards current_in_buffer
-                    self.tsn_counter = data.tsn;
-                    
-                    if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
-                        // TODO do we ack something even though the stream id was invalid?
-                        if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize)
-                        {
-                            if stream_info
-                            .queue
-                            .back()
-                                .map(|last| last.stream_seq_num == data.stream_seq_num - 1)
-                                .unwrap_or(true)
-                            {
-                                self.current_in_buffer += data.buf.len();
-                                stream_info.queue.push_back(data);
-
-                                self.tx_notifications
-                                    .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                        cum_tsn: self.tsn_counter,
-                                        a_rwnd: (self.in_buffer_limit - self.current_in_buffer)
-                                            as u32,
-                                        blocks: vec![],
-                                        duplicated_tsn: vec![],
-                                    })))
-                            } else {
-                                // TODO out of order receive
-                                eprintln!("Stream seq out of order");
-                            }
-                        }
-                    } else {
-                        // TODO just drop?
-                        eprintln!("In buffer full");
-                    }
-                } else {
-                    // TODO out of order receive
-                    eprintln!("TSN out of order {} {}", self.tsn_counter, data.tsn);
-                }
+                self.handle_data_chunk(data);
             }
             Chunk::SAck(sack) => self.tx_notifications.push_back(TxNotification::SAck(sack)),
             _ => {
@@ -119,6 +85,58 @@ impl AssociationRx {
             }
         }
         None
+    }
+
+    pub fn handle_data_chunk(&mut self, data: DataChunk) {
+        if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize) {
+            if data.tsn > self.tsn_counter + 1 {
+                eprintln!("REEEEEE ordered: {} {}", self.tsn_counter, data.tsn);
+                // TSN reordering
+                self.current_in_buffer += data.buf.len();
+                self.tsn_reorder_buffer.insert(data.tsn, data);
+            } else if data.tsn == self.tsn_counter + 1 {
+                self.tsn_counter += 1;
+
+                if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
+                    // TODO do we ack something even though the stream id was invalid?
+
+                    if stream_info
+                        .queue
+                        .back()
+                        .map(|last| last.stream_seq_num == data.stream_seq_num - 1)
+                        .unwrap_or(true)
+                    {
+                        self.current_in_buffer += data.buf.len();
+                        stream_info.queue.push_back(data);
+
+                        self.tx_notifications
+                            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                                cum_tsn: self.tsn_counter,
+                                a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
+                                blocks: vec![],
+                                duplicated_tsn: vec![],
+                            })))
+                    } else {
+                        // TODO out of order receive
+                        eprintln!("Stream seq out of order");
+                    }
+                }
+            } else {
+                // TODO just drop?
+                eprintln!("In buffer full");
+            }
+
+            // Check if any reordered packets can now be received
+            while self
+                .tsn_reorder_buffer
+                .first_key_value()
+                .map(|(tsn, _)| *tsn == self.tsn_counter + 1)
+                .unwrap_or(false)
+            {
+                let data = self.tsn_reorder_buffer.pop_first().unwrap().1;
+                self.handle_data_chunk(data);
+            }
+        }
     }
 
     pub fn poll_data(&mut self, stream_id: u16) -> Option<Bytes> {
