@@ -8,7 +8,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
-    assoc::Association,
+    assoc::{Association, AssociationTx},
     packet::{Chunk, Packet},
     AssocId, Sctp, Settings, TransportAddress,
 };
@@ -127,11 +127,8 @@ impl Context {
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let tx = assoc.tx_mut();
                 tx.notification(tx_notification, std::time::Instant::now());
-                let packet = tx.packet_header();
                 if let Some(addr) = self.addrs.get(&tx.primary_path()) {
-                    while let Some(signal) = tx.poll_signal_to_send(1024) {
-                        send_to(&mut self.socket, *addr, packet, signal);
-                    }
+                    Self::send_everything(tx, *addr, &mut self.socket);
                 }
             }
         }
@@ -141,24 +138,28 @@ impl Context {
                 let (rx, tx) = assoc.split_mut();
                 if let Some(addr) = self.addrs.get(&tx.primary_path()) {
                     rx.notification(rx_notification, std::time::Instant::now());
-                    let packet = tx.packet_header();
+
+                    // Echo back data we receive
                     if let Some(data) = rx.poll_data(0) {
                         tx.try_send_data(data, 0, 0, false, false);
-                        while let Some(data) = tx.poll_data_to_send(1024) {
-                            send_to(&mut self.socket, *addr, packet, Chunk::Data(data));
-                        }
                     }
+
                     for tx_notification in rx.tx_notifications() {
                         tx.notification(tx_notification, std::time::Instant::now());
-                        while let Some(signal) = tx.poll_signal_to_send(1024) {
-                            send_to(&mut self.socket, *addr, packet, signal);
-                        }
-                        while let Some(data) = tx.poll_data_to_send(1024) {
-                            send_to(&mut self.socket, *addr, packet, Chunk::Data(data));
-                        }
                     }
+                    Self::send_everything(tx, *addr, &mut self.socket);
                 }
             }
+        }
+    }
+
+    fn send_everything(tx: &mut AssociationTx, addr: SocketAddr, socket: &mut UdpSocket) {
+        let packet = tx.packet_header();
+        while let Some(signal) = tx.poll_signal_to_send(1024) {
+            send_to(socket, addr, packet, signal);
+        }
+        while let Some(data) = tx.poll_data_to_send(1024) {
+            send_to(socket, addr, packet, Chunk::Data(data));
         }
     }
 
@@ -177,14 +178,6 @@ impl Context {
                 false,
                 false,
             );
-            while let Some(data) = assoc.tx_mut().poll_data_to_send(1024) {
-                send_to(
-                    &mut self.socket,
-                    from,
-                    assoc.tx_mut().packet_header(),
-                    Chunk::Data(data),
-                );
-            }
             self.assocs.insert(assoc.id(), assoc);
             self.addrs.insert(fake_addr, from);
         }
