@@ -203,7 +203,6 @@ impl AssociationTx {
         let packet = if front_buf_len < data_limit {
             let mut packet = self.out_queue.pop_front()?;
             packet.tsn = self.tsn_counter;
-            self.tsn_counter += 1;
             packet.end = true;
 
             packet
@@ -227,11 +226,11 @@ impl AssociationTx {
                 end: false,
             };
 
-            self.tsn_counter += 1;
             full_packet.begin = false;
             full_packet.buf.advance(fragment_data_len);
             fragment
         };
+        self.tsn_counter += 1;
         self.peer_rcv_window -= packet.buf.len() as u32;
         self.current_in_flight += packet.buf.len();
         self.resend_queue.push_back(packet.clone());

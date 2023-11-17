@@ -142,7 +142,7 @@ impl Context {
                 if let Some(addr) = self.addrs.get(&tx.primary_path()) {
                     rx.notification(rx_notification, std::time::Instant::now());
                     let packet = tx.packet_header();
-                    if let Some(data) = rx.poll_data() {
+                    if let Some(data) = rx.poll_data(0) {
                         tx.try_send_data(data, 0, 0, false, false);
                         while let Some(data) = tx.poll_data_to_send(1024) {
                             send_to(&mut self.socket, *addr, packet, Chunk::Data(data));
