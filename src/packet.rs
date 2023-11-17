@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use self::{
     cookie::StateCookie,
     data::DataChunk,
@@ -128,8 +130,29 @@ impl PartialEq for Tsn {
 
 impl Ord for Tsn {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
+        const WRAP_RAD: u32 = u32::MAX / 128;
+        const WRAP_HI: u32 = u32::MAX - WRAP_RAD;
+        const WRAP_LO: u32 = WRAP_RAD;
+        if self.0 < WRAP_LO && other.0 > WRAP_HI {
+            Ordering::Greater
+        } else if other.0 < WRAP_LO && self.0 > WRAP_HI {
+            Ordering::Less
+        } else {
+            self.0.cmp(&other.0)
+        }
     }
+}
+
+#[test]
+fn tsn_compare() {
+    // Normal ordering should work as expected
+    assert_eq!(Ordering::Less, Tsn(1).cmp(&Tsn(2)));
+    assert_eq!(Ordering::Greater, Tsn(2).cmp(&Tsn(1)));
+    assert_eq!(Ordering::Equal, Tsn(1).cmp(&Tsn(1)));
+
+    // But inside the wrap radius we should have wrapping compare
+    assert_eq!(Ordering::Less, Tsn(u32::MAX).cmp(&Tsn(1)));
+    assert_eq!(Ordering::Greater, Tsn(1).cmp(&Tsn(u32::MAX)));
 }
 
 impl PartialOrd for Tsn {
