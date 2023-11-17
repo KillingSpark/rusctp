@@ -4,7 +4,7 @@ use bytes::{Buf, Bytes};
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
-use crate::packet::Tsn;
+use crate::packet::{Tsn, Sequence};
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 
 pub struct AssociationTx {
@@ -31,7 +31,7 @@ pub struct AssociationTx {
 
 #[derive(Clone, Copy)]
 struct PerStreamInfo {
-    seqnum_ctr: u16,
+    seqnum_ctr: Sequence,
 }
 
 pub enum TxNotification {
@@ -80,7 +80,7 @@ impl AssociationTx {
 
             timeout: None,
 
-            per_stream: vec![PerStreamInfo { seqnum_ctr: 0 }; out_streams as usize],
+            per_stream: vec![PerStreamInfo { seqnum_ctr: Sequence(0) }; out_streams as usize],
             current_out_buffered: 0,
         }
     }
@@ -172,7 +172,7 @@ impl AssociationTx {
             begin: true,
             end: true,
         });
-        stream_info.seqnum_ctr += 1;
+        stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
         None
     }
 

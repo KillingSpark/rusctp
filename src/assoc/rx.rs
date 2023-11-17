@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
-use crate::packet::Tsn;
+use crate::packet::{Tsn, Sequence};
 use crate::{AssocId, Chunk};
 
 use super::TxNotification;
@@ -23,7 +23,7 @@ pub struct AssociationRx {
 }
 
 struct PerStreamInfo {
-    _seqnum_ctr: u16,
+    _seqnum_ctr: Sequence,
     queue: VecDeque<DataChunk>,
 }
 
@@ -42,7 +42,7 @@ impl AssociationRx {
 
             per_stream: (0..in_streams)
                 .map(|_| PerStreamInfo {
-                    _seqnum_ctr: 0,
+                    _seqnum_ctr: Sequence(0),
                     queue: VecDeque::new(),
                 })
                 .collect(),
@@ -100,7 +100,7 @@ impl AssociationRx {
                     if stream_info
                         .queue
                         .back()
-                        .map(|last| last.stream_seq_num == data.stream_seq_num - 1)
+                        .map(|last| last.stream_seq_num == data.stream_seq_num.decrease())
                         .unwrap_or(true)
                     {
                         self.current_in_buffer += data.buf.len();

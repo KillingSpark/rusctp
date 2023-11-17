@@ -109,6 +109,59 @@ pub enum Chunk {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct Sequence(pub u16);
+
+impl Sequence {
+    pub fn increase(self) -> Self {
+        Sequence(self.0.wrapping_add(1))
+    }
+    pub fn decrease(self) -> Self {
+        Sequence(self.0.wrapping_sub(1))
+    }
+}
+
+impl Eq for Sequence {}
+
+impl PartialEq for Sequence {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl Ord for Sequence {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        const WRAP_RAD: u16 = u16::MAX / 128;
+        const WRAP_HI: u16 = u16::MAX - WRAP_RAD;
+        const WRAP_LO: u16 = WRAP_RAD;
+        if self.0 < WRAP_LO && other.0 > WRAP_HI {
+            Ordering::Greater
+        } else if other.0 < WRAP_LO && self.0 > WRAP_HI {
+            Ordering::Less
+        } else {
+            self.0.cmp(&other.0)
+        }
+    }
+}
+
+impl PartialOrd for Sequence {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Self::cmp(self, other))
+    }
+}
+
+#[test]
+fn sequence_compare() {
+    // Normal ordering should work as expected
+    assert_eq!(Ordering::Less, Sequence(1).cmp(&Sequence(2)));
+    assert_eq!(Ordering::Greater, Sequence(2).cmp(&Sequence(1)));
+    assert_eq!(Ordering::Equal, Sequence(1).cmp(&Sequence(1)));
+
+    // But inside the wrap radius we should have wrapping compare
+    assert_eq!(Ordering::Less, Sequence(u16::MAX).cmp(&Sequence(1)));
+    assert_eq!(Ordering::Greater, Sequence(1).cmp(&Sequence(u16::MAX)));
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Tsn(pub u32);
 
 impl Tsn {
@@ -143,6 +196,12 @@ impl Ord for Tsn {
     }
 }
 
+impl PartialOrd for Tsn {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Self::cmp(self, other))
+    }
+}
+
 #[test]
 fn tsn_compare() {
     // Normal ordering should work as expected
@@ -153,12 +212,6 @@ fn tsn_compare() {
     // But inside the wrap radius we should have wrapping compare
     assert_eq!(Ordering::Less, Tsn(u32::MAX).cmp(&Tsn(1)));
     assert_eq!(Ordering::Greater, Tsn(1).cmp(&Tsn(u32::MAX)));
-}
-
-impl PartialOrd for Tsn {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(Self::cmp(self, other))
-    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -383,7 +436,7 @@ fn roundtrip() {
     roundtrip(Chunk::Data(DataChunk {
         tsn: Tsn(1234),
         stream_id: 1234,
-        stream_seq_num: 1234,
+        stream_seq_num: Sequence(1234),
         ppid: 1234,
         buf: Bytes::copy_from_slice(&[1, 2, 3, 4, 5, 6]),
         immediate: true,

@@ -1,12 +1,12 @@
 use bytes::{Buf, BufMut, Bytes};
 
-use super::{param::padding_needed, Tsn, CHUNK_DATA};
+use super::{param::padding_needed, Tsn, CHUNK_DATA, Sequence};
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct DataChunk {
     pub tsn: Tsn,
     pub stream_id: u16,
-    pub stream_seq_num: u16,
+    pub stream_seq_num: Sequence,
     pub ppid: u32,
     pub(crate) buf: Bytes,
 
@@ -23,7 +23,7 @@ impl DataChunk {
         }
         let tsn = Tsn(data.get_u32());
         let stream_id = data.get_u16();
-        let stream_seq_num = data.get_u16();
+        let stream_seq_num = Sequence(data.get_u16());
         let ppid = data.get_u32();
 
         let immediate = flags & (0x1 << 3) == 0x1 << 3;
@@ -61,7 +61,7 @@ impl DataChunk {
             // value
             buf.put_u32(self.tsn.0);
             buf.put_u16(self.stream_id);
-            buf.put_u16(self.stream_seq_num);
+            buf.put_u16(self.stream_seq_num.0);
             buf.put_u32(self.ppid);
             buf.put_slice(&self.buf);
 
