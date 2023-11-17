@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes};
 
-use super::{param::padding_needed, Tsn, CHUNK_DATA, Sequence};
+use super::{param::padding_needed, Sequence, Tsn, CHUNK_DATA};
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct DataChunk {

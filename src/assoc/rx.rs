@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
-use crate::packet::{Tsn, Sequence};
+use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk};
 
 use super::TxNotification;
@@ -23,8 +23,8 @@ pub struct AssociationRx {
 }
 
 struct PerStreamInfo {
-    _seqnum_ctr: Sequence,
-    queue: VecDeque<DataChunk>,
+    seqnum_ctr: Sequence,
+    queue: BTreeMap<Sequence, DataChunk>,
 }
 
 pub enum RxNotification {
@@ -42,8 +42,8 @@ impl AssociationRx {
 
             per_stream: (0..in_streams)
                 .map(|_| PerStreamInfo {
-                    _seqnum_ctr: Sequence(0),
-                    queue: VecDeque::new(),
+                    seqnum_ctr: Sequence(u16::MAX),
+                    queue: BTreeMap::new(),
                 })
                 .collect(),
             tsn_reorder_buffer: BTreeMap::new(),
@@ -97,26 +97,16 @@ impl AssociationRx {
                 if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
                     // TODO do we ack something even though the stream id was invalid?
 
-                    if stream_info
-                        .queue
-                        .back()
-                        .map(|last| last.stream_seq_num == data.stream_seq_num.decrease())
-                        .unwrap_or(true)
-                    {
-                        self.current_in_buffer += data.buf.len();
-                        stream_info.queue.push_back(data);
+                    self.current_in_buffer += data.buf.len();
+                    stream_info.queue.insert(data.stream_seq_num, data);
 
-                        self.tx_notifications
-                            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                cum_tsn: self.tsn_counter.0,
-                                a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
-                                blocks: vec![],
-                                duplicated_tsn: vec![],
-                            })))
-                    } else {
-                        // TODO out of order receive
-                        eprintln!("Stream seq out of order");
-                    }
+                    self.tx_notifications
+                        .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                            cum_tsn: self.tsn_counter.0,
+                            a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
+                            blocks: vec![],
+                            duplicated_tsn: vec![],
+                        })))
                 }
             } else {
                 // TODO just drop?
@@ -137,13 +127,16 @@ impl AssociationRx {
     }
 
     pub fn poll_data(&mut self, stream_id: u16) -> Option<Bytes> {
-        let data = self
-            .per_stream
-            .get_mut(stream_id as usize)
-            .and_then(|stream| stream.queue.pop_front().map(|d| d.buf));
-        if let Some(ref data) = data {
-            self.current_in_buffer -= data.len();
+        if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
+            if let Some((seq, _)) = stream_info.queue.first_key_value() {
+                if *seq == stream_info.seqnum_ctr.increase() {
+                    stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
+                    let (_, data) = stream_info.queue.pop_first().unwrap();
+                    self.current_in_buffer -= data.buf.len();
+                    return Some(data.buf);
+                }
+            }
         }
-        data
+        None
     }
 }

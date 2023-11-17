@@ -4,7 +4,7 @@ use bytes::{Buf, Bytes};
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
-use crate::packet::{Tsn, Sequence};
+use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 
 pub struct AssociationTx {
@@ -80,7 +80,12 @@ impl AssociationTx {
 
             timeout: None,
 
-            per_stream: vec![PerStreamInfo { seqnum_ctr: Sequence(0) }; out_streams as usize],
+            per_stream: vec![
+                PerStreamInfo {
+                    seqnum_ctr: Sequence(0)
+                };
+                out_streams as usize
+            ],
             current_out_buffered: 0,
         }
     }
