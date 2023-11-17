@@ -106,6 +106,38 @@ pub enum Chunk {
     ShutDownComplete,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Tsn(pub u32);
+
+impl Tsn {
+    pub fn increase(self) -> Self {
+        Tsn(self.0.wrapping_add(1))
+    }
+    pub fn decrease(self) -> Self {
+        Tsn(self.0.wrapping_sub(1))
+    }
+}
+
+impl Eq for Tsn {}
+
+impl PartialEq for Tsn {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+impl Ord for Tsn {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl PartialOrd for Tsn {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Self::cmp(self, other))
+    }
+}
+
 #[derive(PartialEq, Debug)]
 pub struct UnrecognizedParam {
     pub typ: u16,
@@ -326,7 +358,7 @@ fn roundtrip() {
     }
 
     roundtrip(Chunk::Data(DataChunk {
-        tsn: 1234,
+        tsn: Tsn(1234),
         stream_id: 1234,
         stream_seq_num: 1234,
         ppid: 1234,

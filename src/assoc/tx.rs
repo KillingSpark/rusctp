@@ -4,6 +4,7 @@ use bytes::{Buf, Bytes};
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
+use crate::packet::Tsn;
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 
 pub struct AssociationTx {
@@ -18,7 +19,7 @@ pub struct AssociationTx {
     send_next: VecDeque<Chunk>,
 
     timeout: Option<Instant>,
-    tsn_counter: u32,
+    tsn_counter: Tsn,
 
     out_buffer_limit: usize,
     current_out_buffered: usize,
@@ -44,7 +45,7 @@ pub struct AssocTxSettings {
     pub peer_verification_tag: u32,
     pub local_port: u16,
     pub peer_port: u16,
-    pub init_tsn: u32,
+    pub init_tsn: Tsn,
     pub out_streams: u16,
     pub out_buffer_limit: usize,
     pub peer_arwnd: u32,
@@ -120,7 +121,7 @@ impl AssociationTx {
                 while self
                     .resend_queue
                     .front()
-                    .map(|packet| packet.tsn <= sack.cum_tsn)
+                    .map(|packet| packet.tsn <= Tsn(sack.cum_tsn))
                     .unwrap_or(false)
                 {
                     let acked = self.resend_queue.pop_front().unwrap();
@@ -132,7 +133,7 @@ impl AssociationTx {
 
                     let range = start..end + 1;
                     self.resend_queue.retain(|packet| {
-                        if range.contains(&packet.tsn) {
+                        if range.contains(&packet.tsn.0) {
                             packet_acked(packet);
                             false
                         } else {
@@ -161,7 +162,7 @@ impl AssociationTx {
         };
         self.current_out_buffered += data.len();
         self.out_queue.push_back(DataChunk {
-            tsn: 0,
+            tsn: Tsn(0),
             stream_id: stream,
             stream_seq_num: stream_info.seqnum_ctr,
             ppid,
@@ -230,7 +231,7 @@ impl AssociationTx {
             full_packet.buf.advance(fragment_data_len);
             fragment
         };
-        self.tsn_counter += 1;
+        self.tsn_counter = self.tsn_counter.increase();
         self.peer_rcv_window -= packet.buf.len() as u32;
         self.current_in_flight += packet.buf.len();
         self.resend_queue.push_back(packet.clone());
@@ -247,7 +248,7 @@ fn buffer_limits() {
             peer_verification_tag: 1234,
             local_port: 1,
             peer_port: 2,
-            init_tsn: 1,
+            init_tsn: Tsn(1),
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 10000000,
@@ -290,7 +291,7 @@ fn buffer_limits() {
 
     tx.notification(
         TxNotification::SAck(SelectiveAck {
-            cum_tsn: packet.tsn,
+            cum_tsn: packet.tsn.0,
             a_rwnd: 1000000, // Whatever we just want to have a big receive window here
             blocks: vec![(2, 2)],
             duplicated_tsn: vec![],
@@ -312,7 +313,7 @@ fn arwnd_limits() {
             peer_verification_tag: 1234,
             local_port: 1,
             peer_port: 2,
-            init_tsn: 1,
+            init_tsn: Tsn(1),
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 20,

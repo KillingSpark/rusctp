@@ -4,6 +4,7 @@ use bytes::Bytes;
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
+use crate::packet::Tsn;
 use crate::{AssocId, Chunk};
 
 use super::TxNotification;
@@ -12,10 +13,10 @@ pub struct AssociationRx {
 
     tx_notifications: VecDeque<TxNotification>,
 
-    tsn_counter: u32,
+    tsn_counter: Tsn,
 
     per_stream: Vec<PerStreamInfo>,
-    tsn_reorder_buffer: BTreeMap<u32, DataChunk>,
+    tsn_reorder_buffer: BTreeMap<Tsn, DataChunk>,
 
     in_buffer_limit: usize,
     current_in_buffer: usize,
@@ -26,29 +27,25 @@ struct PerStreamInfo {
     queue: VecDeque<DataChunk>,
 }
 
-impl Default for PerStreamInfo {
-    fn default() -> Self {
-        Self {
-            _seqnum_ctr: 0,
-            queue: VecDeque::new(),
-        }
-    }
-}
-
 pub enum RxNotification {
     Chunk(Chunk),
 }
 
 impl AssociationRx {
-    pub(crate) fn new(id: AssocId, init_tsn: u32, in_streams: u16, in_buffer_limit: usize) -> Self {
+    pub(crate) fn new(id: AssocId, init_tsn: Tsn, in_streams: u16, in_buffer_limit: usize) -> Self {
         Self {
             id,
 
             tx_notifications: VecDeque::new(),
 
-            tsn_counter: init_tsn - 1,
+            tsn_counter: init_tsn.decrease(),
 
-            per_stream: (0..in_streams).map(|_| PerStreamInfo::default()).collect(),
+            per_stream: (0..in_streams)
+                .map(|_| PerStreamInfo {
+                    _seqnum_ctr: 0,
+                    queue: VecDeque::new(),
+                })
+                .collect(),
             tsn_reorder_buffer: BTreeMap::new(),
 
             in_buffer_limit,
@@ -89,13 +86,13 @@ impl AssociationRx {
 
     pub fn handle_data_chunk(&mut self, data: DataChunk) {
         if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize) {
-            if data.tsn > self.tsn_counter + 1 {
-                eprintln!("REEEEEE ordered: {} {}", self.tsn_counter, data.tsn);
+            if data.tsn > self.tsn_counter.increase() {
+                eprintln!("REEEEEE ordered: {:?} {:?}", self.tsn_counter, data.tsn);
                 // TSN reordering
                 self.current_in_buffer += data.buf.len();
                 self.tsn_reorder_buffer.insert(data.tsn, data);
-            } else if data.tsn == self.tsn_counter + 1 {
-                self.tsn_counter += 1;
+            } else if data.tsn == self.tsn_counter.increase() {
+                self.tsn_counter = self.tsn_counter.increase();
 
                 if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
                     // TODO do we ack something even though the stream id was invalid?
@@ -111,7 +108,7 @@ impl AssociationRx {
 
                         self.tx_notifications
                             .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                cum_tsn: self.tsn_counter,
+                                cum_tsn: self.tsn_counter.0,
                                 a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
                                 blocks: vec![],
                                 duplicated_tsn: vec![],
@@ -130,7 +127,7 @@ impl AssociationRx {
             while self
                 .tsn_reorder_buffer
                 .first_key_value()
-                .map(|(tsn, _)| *tsn == self.tsn_counter + 1)
+                .map(|(tsn, _)| *tsn == self.tsn_counter.increase())
                 .unwrap_or(false)
             {
                 let data = self.tsn_reorder_buffer.pop_first().unwrap().1;

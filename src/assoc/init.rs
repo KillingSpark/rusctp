@@ -5,7 +5,7 @@ use crate::{
     packet::{
         cookie::{Cookie, StateCookie},
         init::{InitAck, InitChunk},
-        Chunk, Packet, UnrecognizedParam,
+        Chunk, Packet, Tsn, UnrecognizedParam,
     },
     AssocAlias, AssocId, PerAssocInfo, Sctp, TransportAddress, WaitInitAck,
 };
@@ -142,7 +142,7 @@ impl Sctp {
                     peer_verification_tag: half_open.peer_verification_tag,
                     local_port: packet.to(),
                     peer_port: packet.from(),
-                    init_tsn: half_open.local_initial_tsn,
+                    init_tsn: Tsn(half_open.local_initial_tsn),
                     out_streams: u16::min(half_open.local_out_streams, half_open.peer_out_streams),
                     out_buffer_limit: self.settings.out_buffer_limit,
                     peer_arwnd: half_open.peer_arwnd,
@@ -269,7 +269,7 @@ impl Sctp {
                 peer_verification_tag: cookie.peer_verification_tag,
                 local_port: cookie.local_port,
                 peer_port: cookie.peer_port,
-                init_tsn: cookie.local_initial_tsn,
+                init_tsn: Tsn(cookie.local_initial_tsn),
                 out_streams: cookie.outgoing_streams,
                 out_buffer_limit: self.settings.out_buffer_limit,
                 peer_arwnd: cookie.peer_arwnd,
@@ -311,7 +311,7 @@ impl Sctp {
         }
         self.new_assoc = Some(Association::new(
             assoc_id,
-            peer_initial_tsn,
+            Tsn(peer_initial_tsn),
             incoming_streams,
             self.settings.in_buffer_limit,
             tx_settings,

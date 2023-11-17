@@ -6,7 +6,7 @@ pub use tx::*;
 
 mod init;
 
-use crate::AssocId;
+use crate::{packet::Tsn, AssocId};
 
 pub struct Association {
     id: AssocId,
@@ -18,7 +18,7 @@ impl Association {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: AssocId,
-        init_peer_tsn: u32,
+        init_peer_tsn: Tsn,
         num_in_streams: u16,
         in_buffer_limit: usize,
         tx_settings: AssocTxSettings,
