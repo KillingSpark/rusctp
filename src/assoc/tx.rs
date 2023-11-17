@@ -10,6 +10,8 @@ use crate::{AssocId, Chunk, Packet, TransportAddress};
 pub struct AssociationTx {
     id: AssocId,
     primary_path: TransportAddress,
+    primary_congestion: PerDestinationInfo,
+
     peer_verification_tag: u32,
     local_port: u16,
     peer_port: u16,
@@ -34,6 +36,25 @@ struct PerStreamInfo {
     seqnum_ctr: Sequence,
 }
 
+pub struct PerDestinationInfo {
+    pmtu: usize,
+    cwnd: usize,
+    ssthresh: usize,
+    partial_bytes_acked: usize,
+}
+
+impl PerDestinationInfo {
+    fn new(pmtu: usize) -> Self {
+        let pmcds = pmtu - 12;
+        Self {
+            pmtu,
+            cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
+            ssthresh: usize::MAX,
+            partial_bytes_acked: 0,
+        }
+    }
+}
+
 pub enum TxNotification {
     Send(Chunk),
     SAck(SelectiveAck),
@@ -49,6 +70,7 @@ pub struct AssocTxSettings {
     pub out_streams: u16,
     pub out_buffer_limit: usize,
     pub peer_arwnd: u32,
+    pub pmtu: usize,
 }
 
 impl AssociationTx {
@@ -62,10 +84,13 @@ impl AssociationTx {
             out_streams,
             out_buffer_limit,
             peer_arwnd,
+            pmtu,
         } = settings;
         Self {
             id,
             primary_path,
+            primary_congestion: PerDestinationInfo::new(pmtu),
+
             peer_verification_tag,
             local_port,
             peer_port,
@@ -257,6 +282,7 @@ fn buffer_limits() {
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 10000000,
+            pmtu: 10000,
         },
     );
     let send_ten_bytes = |tx: &mut AssociationTx| {
@@ -322,6 +348,7 @@ fn arwnd_limits() {
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 20,
+            pmtu: 10000,
         },
     );
     let send_ten_bytes = |tx: &mut AssociationTx| {

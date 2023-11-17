@@ -146,6 +146,7 @@ impl Sctp {
                     out_streams: u16::min(half_open.local_out_streams, half_open.peer_out_streams),
                     out_buffer_limit: self.settings.out_buffer_limit,
                     peer_arwnd: half_open.peer_arwnd,
+                    pmtu: self.settings.pmtu,
                 },
             );
             Some(assoc_id)
@@ -273,6 +274,7 @@ impl Sctp {
                 out_streams: cookie.outgoing_streams,
                 out_buffer_limit: self.settings.out_buffer_limit,
                 peer_arwnd: cookie.peer_arwnd,
+                pmtu: self.settings.pmtu,
             },
         );
         self.tx_notifications

@@ -57,6 +57,7 @@ pub struct Settings {
     pub outgoing_streams: u16,
     pub in_buffer_limit: usize,
     pub out_buffer_limit: usize,
+    pub pmtu: usize,
 }
 
 pub struct Sctp {
