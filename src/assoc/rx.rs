@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 
 use bytes::Bytes;
@@ -86,31 +87,33 @@ impl AssociationRx {
 
     pub fn handle_data_chunk(&mut self, data: DataChunk) {
         if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize) {
-            if data.tsn > self.tsn_counter.increase() {
-                eprintln!("REEEEEE ordered: {:?} {:?}", self.tsn_counter, data.tsn);
-                // TSN reordering
-                self.current_in_buffer += data.buf.len();
-                self.tsn_reorder_buffer.insert(data.tsn, data);
-            } else if data.tsn == self.tsn_counter.increase() {
-                self.tsn_counter = self.tsn_counter.increase();
-
-                if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
-                    // TODO do we ack something even though the stream id was invalid?
-
+            match data.tsn.cmp(&self.tsn_counter.increase()) {
+                Ordering::Greater => {
+                    // TSN reordering
                     self.current_in_buffer += data.buf.len();
-                    stream_info.queue.insert(data.stream_seq_num, data);
-
-                    self.tx_notifications
-                        .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                            cum_tsn: self.tsn_counter.0,
-                            a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
-                            blocks: vec![],
-                            duplicated_tsn: vec![],
-                        })))
+                    self.tsn_reorder_buffer.insert(data.tsn, data);
                 }
-            } else {
-                // TODO just drop?
-                eprintln!("In buffer full");
+                Ordering::Equal => {
+                    self.tsn_counter = self.tsn_counter.increase();
+
+                    if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
+                        // TODO do we ack something even though the stream id was invalid?
+
+                        self.current_in_buffer += data.buf.len();
+                        stream_info.queue.insert(data.stream_seq_num, data);
+
+                        self.tx_notifications
+                            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                                cum_tsn: self.tsn_counter.0,
+                                a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
+                                blocks: vec![],
+                                duplicated_tsn: vec![],
+                            })))
+                    }
+                }
+                Ordering::Less => {
+                    // TODO just drop?
+                }
             }
 
             // Check if any reordered packets can now be received

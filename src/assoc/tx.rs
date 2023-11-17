@@ -10,7 +10,7 @@ use crate::{AssocId, Chunk, Packet, TransportAddress};
 pub struct AssociationTx {
     id: AssocId,
     primary_path: TransportAddress,
-    primary_congestion: PerDestinationInfo,
+    _primary_congestion: PerDestinationInfo,
 
     peer_verification_tag: u32,
     local_port: u16,
@@ -37,20 +37,20 @@ struct PerStreamInfo {
 }
 
 pub struct PerDestinationInfo {
-    pmtu: usize,
-    cwnd: usize,
-    ssthresh: usize,
-    partial_bytes_acked: usize,
+    _pmtu: usize,
+    _cwnd: usize,
+    _ssthresh: usize,
+    _partial_bytes_acked: usize,
 }
 
 impl PerDestinationInfo {
     fn new(pmtu: usize) -> Self {
         let pmcds = pmtu - 12;
         Self {
-            pmtu,
-            cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
-            ssthresh: usize::MAX,
-            partial_bytes_acked: 0,
+            _pmtu: pmtu,
+            _cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
+            _ssthresh: usize::MAX,
+            _partial_bytes_acked: 0,
         }
     }
 }
@@ -89,7 +89,7 @@ impl AssociationTx {
         Self {
             id,
             primary_path,
-            primary_congestion: PerDestinationInfo::new(pmtu),
+            _primary_congestion: PerDestinationInfo::new(pmtu),
 
             peer_verification_tag,
             local_port,
