@@ -10,7 +10,7 @@ use crate::{AssocId, Chunk, Packet, TransportAddress};
 pub struct AssociationTx {
     id: AssocId,
     primary_path: TransportAddress,
-    _primary_congestion: PerDestinationInfo,
+    primary_congestion: PerDestinationInfo,
 
     peer_verification_tag: u32,
     local_port: u16,
@@ -36,9 +36,16 @@ struct PerStreamInfo {
     seqnum_ctr: Sequence,
 }
 
-pub struct PerDestinationInfo {
-    _pmtu: usize,
-    _cwnd: usize,
+enum CongestionState {
+    SlowStart,
+    _FastRecover,
+    _CongestionAvoidance,
+}
+
+struct PerDestinationInfo {
+    _state: CongestionState,
+    _pcmds: usize,
+    cwnd: usize,
     _ssthresh: usize,
     _partial_bytes_acked: usize,
 }
@@ -47,11 +54,16 @@ impl PerDestinationInfo {
     fn new(pmtu: usize) -> Self {
         let pmcds = pmtu - 12;
         Self {
-            _pmtu: pmtu,
-            _cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
+            _state: CongestionState::SlowStart,
+            _pcmds: pmcds,
+            cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
             _ssthresh: usize::MAX,
             _partial_bytes_acked: 0,
         }
+    }
+
+    fn send_limit(&self, current_outstanding: usize) -> usize {
+        self.cwnd.saturating_sub(current_outstanding)
     }
 }
 
@@ -89,7 +101,7 @@ impl AssociationTx {
         Self {
             id,
             primary_path,
-            _primary_congestion: PerDestinationInfo::new(pmtu),
+            primary_congestion: PerDestinationInfo::new(pmtu),
 
             peer_verification_tag,
             local_port,
@@ -227,10 +239,14 @@ impl AssociationTx {
     pub fn poll_data_to_send(&mut self, limit: usize) -> Option<DataChunk> {
         let front = self.out_queue.front()?;
         let front_buf_len = front.buf.len();
-        let data_limit = limit - 16;
+        let data_limit = usize::min(
+            limit - 16,
+            self.primary_congestion.send_limit(self.current_in_flight),
+        );
         if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
             return None;
         }
+
         let packet = if front_buf_len < data_limit {
             let mut packet = self.out_queue.pop_front()?;
             packet.tsn = self.tsn_counter;
