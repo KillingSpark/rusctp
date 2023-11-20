@@ -208,14 +208,13 @@ impl AssociationTx {
     pub fn poll_chunk_to_send(&self) -> (Packet, Chunk) {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            if let Some(chunk) = wrapped.poll_signal_to_send(1024) {
+            if let Some(chunk) = wrapped
+                .poll_signal_to_send(1024)
+                .or_else(|| wrapped.poll_data_to_send(1024).map(Chunk::Data))
+            {
                 return (wrapped.packet_header(), chunk);
             } else {
-                if let Some(chunk) = wrapped.poll_data_to_send(1024) {
-                    return (wrapped.packet_header(), Chunk::Data(chunk));
-                } else {
-                    wrapped = self.signal.wait(wrapped).unwrap();
-                }
+                wrapped = self.signal.wait(wrapped).unwrap();
             }
         }
     }
