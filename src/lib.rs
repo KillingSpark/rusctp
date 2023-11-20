@@ -67,7 +67,7 @@ pub struct Sctp {
     settings: Settings,
 
     assoc_id_gen: u64,
-    
+
     new_assoc: Option<Association>,
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
     aliases: HashMap<AssocAlias, AssocId>,

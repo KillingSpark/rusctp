@@ -76,7 +76,7 @@ impl PerDestinationInfo {
                 }
             }
             CongestionState::CongestionAvoidance => {
-                self.cwnd +=  usize::min(self.pcmds, bytes_acked);
+                self.cwnd += usize::min(self.pcmds, bytes_acked);
             }
             _ => {}
         }
