@@ -83,6 +83,7 @@ impl PerDestinationInfo {
     }
 }
 
+#[derive(Debug)]
 pub enum TxNotification {
     Send(Chunk),
     SAck(SelectiveAck),

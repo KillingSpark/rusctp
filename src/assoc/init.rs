@@ -26,8 +26,8 @@ impl Sctp {
             peer_port,
             local_port,
         };
-        let local_verification_tag = self.rand.next_u32();
-        let initial_tsn = self.rand.next_u32();
+        let local_verification_tag = rand::thread_rng().next_u32();
+        let initial_tsn = rand::thread_rng().next_u32();
         self.wait_init_ack.insert(
             alias,
             WaitInitAck {
@@ -176,8 +176,8 @@ impl Sctp {
                 // -> stop processing this
                 return true;
             }
-            let initial_tsn = self.rand.next_u32();
-            let local_verification_tag = self.rand.next_u32();
+            let initial_tsn = rand::thread_rng().next_u32();
+            let local_verification_tag = rand::thread_rng().next_u32();
             let mut cookie = Cookie {
                 init_address: from,
                 aliases: init.aliases,

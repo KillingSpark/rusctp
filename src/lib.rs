@@ -1,10 +1,13 @@
 use bytes::{Buf, Bytes};
 
+pub mod sync {
+    pub mod assoc;
+}
+
 pub mod assoc;
 pub mod packet;
 use assoc::{Association, RxNotification, TxNotification};
 use packet::{Chunk, Packet, ParseError};
-use rand::rngs::ThreadRng;
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -64,8 +67,7 @@ pub struct Sctp {
     settings: Settings,
 
     assoc_id_gen: u64,
-    rand: ThreadRng,
-
+    
     new_assoc: Option<Association>,
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
     aliases: HashMap<AssocAlias, AssocId>,
@@ -83,7 +85,6 @@ impl Sctp {
         Self {
             settings,
             assoc_id_gen: 1,
-            rand: ThreadRng::default(),
 
             new_assoc: None,
             assoc_infos: HashMap::new(),
