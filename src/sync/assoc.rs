@@ -157,13 +157,10 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync> InnerSctp
         }
 
         for (id, tx_notification) in self.sctp.tx_notifications() {
-            eprintln!("Tx note: {tx_notification:?}");
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let mut tx = assoc.tx.wrapped.lock().unwrap();
                 tx.notification(tx_notification, std::time::Instant::now());
                 assoc.tx.signal.notify_all();
-            } else {
-                eprintln!("dropped :(");
             }
         }
 
