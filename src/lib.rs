@@ -1,8 +1,10 @@
 use bytes::{Buf, Bytes};
 
+#[cfg(feature = "async")]
 pub mod assoc_sync {
     pub mod assoc;
 }
+#[cfg(feature = "sync")]
 pub mod assoc_async {
     pub mod assoc;
 }

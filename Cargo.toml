@@ -5,8 +5,15 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["sync", "async"]
+sync = []
+async = []
+
 [dependencies]
 crc = "3"
 bytes = "1"
 rand = "0.8"
+
+[dev-dependencies]
 tokio = {version = "*", features= ["rt", "rt-multi-thread", "net"] }
