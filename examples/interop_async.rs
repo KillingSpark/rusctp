@@ -58,7 +58,6 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                     let mut buf = [0u8; 1024 * 100];
                     while let Ok(size) = socket.recv(&mut buf).await {
                         sctp.receive_data(Bytes::copy_from_slice(&buf[..size]), fake_addr);
-                        sctp.handle_notifications();
                     }
                 }
             });
@@ -124,7 +123,6 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                     let mut buf = [0u8; 1024 * 100];
                     while let Ok(size) = socket.recv(&mut buf).await {
                         sctp.receive_data(Bytes::copy_from_slice(&buf[..size]), fake_addr);
-                        sctp.handle_notifications();
                     }
                 }
             });

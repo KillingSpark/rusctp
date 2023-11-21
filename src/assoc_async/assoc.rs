@@ -76,6 +76,7 @@ impl Sctp {
         if inner.sctp.has_next_send_immediate() {
             inner.send_immediate_wakers.drain(..).for_each(Waker::wake);
         }
+        inner.handle_notifications();
     }
 
     pub fn connect(
@@ -165,10 +166,6 @@ impl Sctp {
         NextSendFuture {
             inner: self.inner.clone(),
         }
-    }
-
-    pub fn handle_notifications(&self) {
-        self.inner.lock().unwrap().handle_notifications()
     }
 }
 
