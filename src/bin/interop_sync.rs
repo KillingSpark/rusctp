@@ -2,8 +2,8 @@ use std::{io, net::UdpSocket, sync::Arc};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
+    assoc_sync::assoc::Sctp,
     packet::{Chunk, Packet},
-    sync::assoc::Sctp,
     Settings,
 };
 

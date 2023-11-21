@@ -1,6 +1,9 @@
 use bytes::{Buf, Bytes};
 
-pub mod sync {
+pub mod assoc_sync {
+    pub mod assoc;
+}
+pub mod assoc_async {
     pub mod assoc;
 }
 
@@ -210,6 +213,12 @@ impl Sctp {
         &mut self,
     ) -> impl Iterator<Item = (TransportAddress, Packet, Chunk)> + '_ {
         self.send_immediate.drain(..)
+    }
+    pub fn next_send_immediate(&mut self) -> Option<(TransportAddress, Packet, Chunk)> {
+        self.send_immediate.pop_front()
+    }
+    pub fn has_next_send_immediate(&mut self) -> bool {
+        self.send_immediate.front().is_some()
     }
     pub fn new_assoc(&mut self) -> Option<Association> {
         self.new_assoc.take()

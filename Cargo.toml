@@ -9,3 +9,4 @@ edition = "2021"
 crc = "3"
 bytes = "1"
 rand = "0.8"
+tokio = {version = "*", features= ["rt", "rt-multi-thread", "net"] }
