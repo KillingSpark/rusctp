@@ -16,4 +16,4 @@ bytes = "1"
 rand = "0.8"
 
 [dev-dependencies]
-tokio = {version = "*", features= ["rt", "rt-multi-thread", "net"] }
+tokio = {version = "*", features= ["rt", "rt-multi-thread", "net", "time"] }

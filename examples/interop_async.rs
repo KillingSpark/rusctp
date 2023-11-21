@@ -23,6 +23,7 @@ fn main() {
 fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
+        .enable_time()
         .build()
         .unwrap();
     let fake_addr = rusctp::TransportAddress::Fake(100);
@@ -73,6 +74,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         tokio::spawn(async move {
             loop {
                 let data = rx.recv_data(0).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 echo_tx.send_data(data, 0, 0, false, false).await
             }
         });
@@ -87,6 +89,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
 fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
+        .enable_time()
         .build()
         .unwrap();
 
@@ -134,6 +137,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         tokio::spawn(async move {
             loop {
                 let data = rx.recv_data(0).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 echo_tx.send_data(data, 0, 0, false, false).await
             }
         });
