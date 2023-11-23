@@ -3,6 +3,7 @@ use std::{
     future::Future,
     sync::{Arc, Mutex},
     task::Waker,
+    time::Instant,
 };
 
 use bytes::Bytes;
@@ -293,11 +294,12 @@ impl AssociationTx {
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.tx.wrapped.lock().unwrap();
-                if let Some(chunk) = wrapped
-                    .tx
-                    .poll_signal_to_send(1024)
-                    .or_else(|| wrapped.tx.poll_data_to_send(1024).map(Chunk::Data))
-                {
+                if let Some(chunk) = wrapped.tx.poll_signal_to_send(1024).or_else(|| {
+                    wrapped
+                        .tx
+                        .poll_data_to_send(1024, Instant::now())
+                        .map(Chunk::Data)
+                }) {
                     for waker in wrapped.send_wakers.drain(..) {
                         waker.wake();
                     }

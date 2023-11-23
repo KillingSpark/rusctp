@@ -1,10 +1,10 @@
 use bytes::{Buf, BufMut, Bytes};
 
-use super::{param::padding_needed, CHUNK_HEADER_SIZE, CHUNK_SACK};
+use super::{param::padding_needed, CHUNK_HEADER_SIZE, CHUNK_SACK, Tsn};
 
 #[derive(PartialEq, Debug)]
 pub struct SelectiveAck {
-    pub cum_tsn: u32,
+    pub cum_tsn: Tsn,
     pub a_rwnd: u32,
     pub blocks: Vec<(u16, u16)>,
     pub duplicated_tsn: Vec<u32>,
@@ -15,7 +15,7 @@ impl SelectiveAck {
         if data.len() < 4 + 4 + 2 + 2 {
             return None;
         }
-        let cum_tsn = data.get_u32();
+        let cum_tsn = Tsn(data.get_u32());
         let a_rwnd = data.get_u32();
         let n_blocks = data.get_u16();
         let n_dups = data.get_u16();
@@ -53,7 +53,7 @@ impl SelectiveAck {
         buf.put_u16(size as u16);
 
         // value
-        buf.put_u32(self.cum_tsn);
+        buf.put_u32(self.cum_tsn.0);
         buf.put_u32(self.a_rwnd);
         buf.put_u16(self.blocks.len() as u16);
         buf.put_u16(self.duplicated_tsn.len() as u16);

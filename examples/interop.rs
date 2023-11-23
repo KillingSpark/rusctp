@@ -3,7 +3,7 @@ use std::{
     io,
     net::{SocketAddr, UdpSocket},
     str::FromStr,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -160,7 +160,7 @@ impl Context {
         while let Some(signal) = tx.poll_signal_to_send(1024) {
             send_to(socket, addr, packet, signal);
         }
-        while let Some(data) = tx.poll_data_to_send(1024) {
+        while let Some(data) = tx.poll_data_to_send(1024, Instant::now()) {
             send_to(socket, addr, packet, Chunk::Data(data));
         }
     }

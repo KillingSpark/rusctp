@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{collections::VecDeque, time::Instant};
 
 use bytes::{Buf, Bytes};
@@ -17,10 +18,9 @@ pub struct AssociationTx {
     peer_port: u16,
 
     out_queue: VecDeque<DataChunk>,
-    resend_queue: VecDeque<DataChunk>,
+    resend_queue: VecDeque<ResendEntry>,
     send_next: VecDeque<Chunk>,
 
-    timeout: Option<Instant>,
     tsn_counter: Tsn,
 
     out_buffer_limit: usize,
@@ -29,6 +29,25 @@ pub struct AssociationTx {
     per_stream: Vec<PerStreamInfo>,
 
     peer_rcv_window: u32,
+    rtt_estimate: Duration,
+}
+
+struct ResendEntry {
+    queued_at: Instant,
+    data: DataChunk,
+    marked_received: bool,
+    marked_for_resend: bool,
+}
+
+impl ResendEntry {
+    fn new(data: DataChunk, now: Instant) -> Self {
+        Self {
+            queued_at: now,
+            data,
+            marked_for_resend: false,
+            marked_received: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -38,17 +57,19 @@ struct PerStreamInfo {
 
 enum CongestionState {
     SlowStart,
-    _FastRecover,
-    _FastRetransmit,
     CongestionAvoidance,
 }
 
 struct PerDestinationInfo {
     state: CongestionState,
-    pcmds: usize,
+    pmcds: usize,
     cwnd: usize,
     ssthresh: usize,
     _partial_bytes_acked: usize,
+    bytes_acked_counter: usize,
+    bytes_acked_start_tsn: Option<Tsn>,
+    last_acked_tsn: Tsn,
+    duplicated_acks: usize,
 }
 
 impl PerDestinationInfo {
@@ -56,10 +77,14 @@ impl PerDestinationInfo {
         let pmcds = pmtu - 12;
         Self {
             state: CongestionState::SlowStart,
-            pcmds: pmcds,
+            pmcds,
             cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
             ssthresh: usize::MAX,
             _partial_bytes_acked: 0,
+            bytes_acked_counter: 0,
+            bytes_acked_start_tsn: None,
+            last_acked_tsn: Tsn(0),
+            duplicated_acks: 0,
         }
     }
 
@@ -67,18 +92,67 @@ impl PerDestinationInfo {
         self.cwnd.saturating_sub(current_outstanding)
     }
 
-    fn bytes_acked(&mut self, bytes_acked: usize) {
+    fn bytes_acked(&mut self, bytes_acked: usize, up_to_tsn: Tsn) {
+        self.bytes_acked_counter += bytes_acked;
+        if let Some(bytes_acked_start_tsn) = { self.bytes_acked_start_tsn } {
+            if up_to_tsn >= bytes_acked_start_tsn {
+                self.adjust_cwnd();
+            }
+        }
+        if up_to_tsn == self.last_acked_tsn {
+            self.duplicated_acks += 1;
+            if self.duplicated_acks >= 2 {
+                self.ssthresh = self.cwnd / 2;
+                self.cwnd = self.ssthresh;
+                self.change_state(CongestionState::CongestionAvoidance);
+            }
+        } else {
+            self.last_acked_tsn = up_to_tsn;
+            self.duplicated_acks = 0;
+        }
+    }
+
+    fn rto_timer(&mut self) {
+        self.duplicated_acks += 1;
+        if self.duplicated_acks >= 2 {
+            self.ssthresh = self.cwnd / 2;
+            self.cwnd = usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404));
+            self.change_state(CongestionState::CongestionAvoidance);
+        }
+    }
+
+    fn change_state(&mut self, state: CongestionState) {
+        self.bytes_acked_start_tsn = None;
+        self.bytes_acked_counter = 0;
+        self.state = state;
+    }
+
+    fn tsn_sent(&mut self, tsn: Tsn) {
+        if self.bytes_acked_start_tsn.is_none() {
+            self.bytes_acked_start_tsn = Some(tsn);
+            self.bytes_acked_counter = 0;
+        }
+    }
+
+    fn adjust_cwnd(&mut self) {
+        let bytes_acked = self.bytes_acked_counter;
+        self.bytes_acked_counter = 0;
+        self.bytes_acked_start_tsn = None;
         match self.state {
             CongestionState::SlowStart => {
-                self.cwnd += usize::max(bytes_acked, usize::min(self.pcmds, bytes_acked));
-                if self.cwnd >= self.ssthresh {
-                    self.state = CongestionState::CongestionAvoidance;
+                if bytes_acked >= self.cwnd {
+                    self.cwnd += usize::max(bytes_acked, usize::min(self.pmcds, bytes_acked));
+                    if self.cwnd >= self.ssthresh {
+                        self.cwnd = self.ssthresh;
+                        self.state = CongestionState::CongestionAvoidance;
+                    }
                 }
             }
             CongestionState::CongestionAvoidance => {
-                self.cwnd += usize::min(self.pcmds, bytes_acked);
+                if bytes_acked >= self.cwnd {
+                    self.cwnd += usize::min(self.pmcds, bytes_acked);
+                }
             }
-            _ => {}
         }
     }
 }
@@ -100,6 +174,17 @@ pub struct AssocTxSettings {
     pub out_buffer_limit: usize,
     pub peer_arwnd: u32,
     pub pmtu: usize,
+}
+
+pub struct Timer {
+    tsn: Tsn,
+    at: Instant,
+}
+
+impl Timer {
+    pub fn at(&self) -> Instant {
+        self.at
+    }
 }
 
 impl AssociationTx {
@@ -132,8 +217,6 @@ impl AssociationTx {
             resend_queue: VecDeque::new(),
             send_next: VecDeque::new(),
 
-            timeout: None,
-
             per_stream: vec![
                 PerStreamInfo {
                     seqnum_ctr: Sequence(0)
@@ -141,6 +224,7 @@ impl AssociationTx {
                 out_streams as usize
             ],
             current_out_buffered: 0,
+            rtt_estimate: Duration::from_secs(1),
         }
     }
 
@@ -148,22 +232,21 @@ impl AssociationTx {
         self.id
     }
 
-    pub fn tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
-        let mut next_tick = None;
-
-        if let Some(timeout) = self.timeout {
-            if timeout > now {
-                next_tick = Some(timeout);
-            } else {
-                self.handle_timeout();
-            }
-        }
-
-        next_tick
+    pub fn next_timeout(&self) -> Option<Instant> {
+        self.resend_queue
+            .front()
+            .map(|packet| packet.queued_at + self.rtt_estimate)
     }
 
-    fn handle_timeout(&mut self) {
-        // TODO
+    pub fn handle_timeout(&mut self, timeout: Timer) {
+        if let Some(found) = self
+            .resend_queue
+            .iter_mut()
+            .find(|p| p.data.tsn == timeout.tsn)
+        {
+            self.primary_congestion.rto_timer();
+            found.marked_for_resend = true;
+        }
     }
 
     pub fn notification(&mut self, notification: TxNotification, _now: std::time::Instant) {
@@ -177,38 +260,36 @@ impl AssociationTx {
 
     pub fn handle_sack(&mut self, sack: SelectiveAck) {
         let mut bytes_acked = 0;
-        let mut packet_acked = |acked: &DataChunk| {
-            self.current_out_buffered -= acked.buf.len();
-            self.current_in_flight -= acked.buf.len();
-            bytes_acked += acked.buf.len();
+        let mut packet_acked = |acked: &ResendEntry| {
+            self.current_out_buffered -= acked.data.buf.len();
+            self.current_in_flight -= acked.data.buf.len();
+            bytes_acked += acked.data.buf.len();
         };
 
         while self
             .resend_queue
             .front()
-            .map(|packet| packet.tsn <= Tsn(sack.cum_tsn))
+            .map(|packet| packet.data.tsn <= sack.cum_tsn)
             .unwrap_or(false)
         {
             let acked = self.resend_queue.pop_front().unwrap();
             packet_acked(&acked);
         }
         for block in sack.blocks {
-            // TODO these are only advisory, mark but don't delete them until cum_tsn has reached them
-            let start = sack.cum_tsn + block.0 as u32;
-            let end = sack.cum_tsn + block.1 as u32;
+            let start = sack.cum_tsn.0 + block.0 as u32;
+            let end = sack.cum_tsn.0 + block.1 as u32;
 
             let range = start..end + 1;
-            self.resend_queue.retain(|packet| {
-                if range.contains(&packet.tsn.0) {
-                    packet_acked(packet);
-                    false
-                } else {
-                    true
+            self.resend_queue.iter_mut().for_each(|packet| {
+                if range.contains(&packet.data.tsn.0) {
+                    packet.marked_received = true;
+                    packet.marked_for_resend = false;
                 }
             });
         }
         self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
-        self.primary_congestion.bytes_acked(bytes_acked);
+        self.primary_congestion
+            .bytes_acked(bytes_acked, sack.cum_tsn);
     }
 
     pub fn try_send_data(
@@ -259,24 +340,44 @@ impl AssociationTx {
     }
 
     // Collect next chunk if it would still fit inside the limit
-    pub fn poll_data_to_send(&mut self, limit: usize) -> Option<DataChunk> {
-        let front = self.out_queue.front()?;
-        let front_buf_len = front.buf.len();
+    pub fn poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> Option<DataChunk> {
+        // The data chunk header always takes 16 bytes
+        let data_limit = data_limit - 16;
+
+        // first send any outstanding packets that have been marked for a resend and fit in the limit
+        if let Some(front) = self.resend_queue.front() {
+            if front.marked_for_resend {
+                if front.data.buf.len() <= data_limit {
+                    return Some(front.data.clone());
+                } else {
+                    return None;
+                }
+            }
+        }
+
+        // anything else is subject to the congestion window limits
         let data_limit = usize::min(
-            limit - 16,
+            data_limit,
             self.primary_congestion.send_limit(self.current_in_flight),
         );
+
+        let front = self.out_queue.front()?;
+        let front_buf_len = front.buf.len();
+
+        // before sending new packets we need to check the peers receive window
         if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
             return None;
         }
 
+        // check if we can just send the next chunk entirely or if we need to fragment
         let packet = if front_buf_len < data_limit {
             let mut packet = self.out_queue.pop_front()?;
             packet.tsn = self.tsn_counter;
             packet.end = true;
 
             packet
-        } else {
+        } else if front_buf_len > self.primary_congestion.pmcds {
+            // TODO I am sure there are better metrics to determin usefulness of fragmentation
             let fragment_data_len = data_limit;
             if fragment_data_len == 0 {
                 return None;
@@ -299,11 +400,15 @@ impl AssociationTx {
             full_packet.begin = false;
             full_packet.buf.advance(fragment_data_len);
             fragment
+        } else {
+            return None;
         };
         self.tsn_counter = self.tsn_counter.increase();
         self.peer_rcv_window -= packet.buf.len() as u32;
         self.current_in_flight += packet.buf.len();
-        self.resend_queue.push_back(packet.clone());
+        self.resend_queue
+            .push_back(ResendEntry::new(packet.clone(), now));
+        self.primary_congestion.tsn_sent(packet.tsn);
         Some(packet)
     }
 }
@@ -347,11 +452,11 @@ fn buffer_limits() {
     assert!(send_ten_bytes(&mut tx).is_some());
 
     let packet = tx
-        .poll_data_to_send(100)
+        .poll_data_to_send(100, Instant::now())
         .expect("Should return the first packet");
-    tx.poll_data_to_send(100)
+    tx.poll_data_to_send(100, Instant::now())
         .expect("Should return the second packet");
-    tx.poll_data_to_send(100)
+    tx.poll_data_to_send(100, Instant::now())
         .expect("Should return the third packet");
 
     assert_eq!(tx.current_in_flight, 30);
@@ -361,7 +466,7 @@ fn buffer_limits() {
 
     tx.notification(
         TxNotification::SAck(SelectiveAck {
-            cum_tsn: packet.tsn.0,
+            cum_tsn: packet.tsn,
             a_rwnd: 1000000, // Whatever we just want to have a big receive window here
             blocks: vec![(2, 2)],
             duplicated_tsn: vec![],
@@ -411,13 +516,13 @@ fn arwnd_limits() {
     assert!(send_ten_bytes(&mut tx).is_none());
     assert!(send_ten_bytes(&mut tx).is_none());
 
-    assert!(tx.poll_data_to_send(100).is_some());
-    assert!(tx.poll_data_to_send(100).is_some());
-    assert!(tx.poll_data_to_send(100).is_none());
+    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
 
     tx.notification(
         TxNotification::SAck(SelectiveAck {
-            cum_tsn: 100, // Whatever we dont care about out buffer size here
+            cum_tsn: Tsn(100), // Whatever we dont care about out buffer size here
             a_rwnd: 20,
             blocks: vec![],
             duplicated_tsn: vec![],
@@ -425,7 +530,7 @@ fn arwnd_limits() {
         std::time::Instant::now(),
     );
 
-    assert!(tx.poll_data_to_send(100).is_some());
-    assert!(tx.poll_data_to_send(100).is_some());
-    assert!(tx.poll_data_to_send(100).is_none());
+    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
 }

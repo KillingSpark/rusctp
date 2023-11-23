@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     sync::{Arc, Condvar, Mutex},
+    time::Instant,
 };
 
 use bytes::Bytes;
@@ -205,10 +206,11 @@ impl AssociationTx {
     pub fn poll_chunk_to_send(&self) -> (Packet, Chunk) {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            if let Some(chunk) = wrapped
-                .poll_signal_to_send(1024)
-                .or_else(|| wrapped.poll_data_to_send(1024).map(Chunk::Data))
-            {
+            if let Some(chunk) = wrapped.poll_signal_to_send(1024).or_else(|| {
+                wrapped
+                    .poll_data_to_send(1024, Instant::now())
+                    .map(Chunk::Data)
+            }) {
                 return (wrapped.packet_header(), chunk);
             } else {
                 wrapped = self.signal.wait(wrapped).unwrap();

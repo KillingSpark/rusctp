@@ -104,7 +104,7 @@ impl AssociationRx {
 
                         self.tx_notifications
                             .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                cum_tsn: self.tsn_counter.0,
+                                cum_tsn: self.tsn_counter,
                                 a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
                                 blocks: vec![],
                                 duplicated_tsn: vec![],

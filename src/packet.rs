@@ -485,7 +485,7 @@ fn roundtrip() {
     roundtrip(Chunk::StateCookieAck);
 
     roundtrip(Chunk::SAck(SelectiveAck {
-        cum_tsn: 1234,
+        cum_tsn: Tsn(1234),
         a_rwnd: 1234,
         blocks: vec![(1, 2), (3, 4)],
         duplicated_tsn: vec![1, 2, 3, 4],
