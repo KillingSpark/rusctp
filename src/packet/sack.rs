@@ -1,6 +1,6 @@
 use bytes::{Buf, BufMut, Bytes};
 
-use super::{param::padding_needed, CHUNK_HEADER_SIZE, CHUNK_SACK, Tsn};
+use super::{param::padding_needed, Tsn, CHUNK_HEADER_SIZE, CHUNK_SACK};
 
 #[derive(PartialEq, Debug)]
 pub struct SelectiveAck {
