@@ -212,6 +212,15 @@ impl AssociationTx {
                     .map(Chunk::Data)
             }) {
                 return (wrapped.packet_header(), chunk);
+            } else if let Some(timeout) = wrapped.next_timeout() {
+                let res = self
+                    .signal
+                    .wait_timeout(wrapped, Instant::now() - timeout.at())
+                    .unwrap();
+                wrapped = res.0;
+                if res.1.timed_out() {
+                    wrapped.handle_timeout(timeout);
+                }
             } else {
                 wrapped = self.signal.wait(wrapped).unwrap();
             }

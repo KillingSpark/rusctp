@@ -10,7 +10,7 @@ use bytes::Bytes;
 
 use crate::{
     packet::{Chunk, Packet},
-    AssocId, Settings, TransportAddress,
+    AssocId, Settings, TransportAddress, assoc::Timer,
 };
 
 pub struct Sctp {
@@ -280,6 +280,15 @@ impl AssociationTx {
             unordered,
         }
     }
+
+    pub fn next_timeout(&self) -> Option<Timer> {
+        self.wrapped.lock().unwrap().tx.next_timeout()
+    }
+
+    pub fn handle_timeout(&self, timer: Timer) {
+        self.wrapped.lock().unwrap().tx.handle_timeout(timer);
+    }
+
 
     pub fn poll_chunk_to_send(self: &Arc<AssociationTx>) -> impl Future<Output = (Packet, Chunk)> {
         struct PollFuture {

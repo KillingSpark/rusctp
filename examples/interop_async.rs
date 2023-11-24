@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
@@ -142,8 +146,20 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             }
         });
         loop {
-            let (packet, chunk) = tx.poll_chunk_to_send().await;
-            send_to(&socket, packet, chunk).await.unwrap();
+            if let Some(timer) = tx.next_timeout() {
+                let timeout = timer.at() - Instant::now();
+                tokio::select! {
+                    (packet, chunk) = tx.poll_chunk_to_send() => {
+                        send_to(&socket, packet, chunk).await.unwrap();
+                    }
+                    _ = tokio::time::sleep(timeout) => {
+                        tx.handle_timeout(timer);
+                    }
+                };
+            } else {
+                let (packet, chunk) = tx.poll_chunk_to_send().await;
+                send_to(&socket, packet, chunk).await.unwrap();
+            }
         }
     });
     runtime
