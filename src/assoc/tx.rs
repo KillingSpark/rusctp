@@ -271,7 +271,7 @@ impl AssociationTx {
         if let Some(current_timer) = self.rto_timer {
             if current_timer.marker == timeout.marker {
                 self.resend_queue.iter_mut().for_each(|p| {
-                    if p.queued_at + self.srtt.rto_duration() < timeout.at {
+                    if p.queued_at + self.srtt.rto_duration() <= timeout.at {
                         p.marked_for_retransmit = true;
                     }
                 });
@@ -316,6 +316,7 @@ impl AssociationTx {
             if front.marked_for_retransmit {
                 if front.data.buf.len() <= data_limit {
                     let rtx = front.data.clone();
+                    front.marked_for_retransmit = false;
                     if self.rto_timer.is_none() {
                         self.set_timeout(now);
                     }
