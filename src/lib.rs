@@ -178,6 +178,19 @@ impl Sctp {
                     if let Chunk::Init(_) | Chunk::InitAck(_) = chunk {
                         // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
                     } else {
+                        if let Chunk::Abort = chunk {
+                            self.aliases.retain(|_, id| *id != assoc_id);
+                            // TODO delete any half open connections on abort
+                            self.assoc_infos.remove(&assoc_id);
+                            self.tx_notifications.retain(|(id, _)| *id != assoc_id);
+                            self.rx_notifications.retain(|(id, _)| *id != assoc_id);
+                            self.send_immediate.retain(|(addr, to_packet, _)| {
+                                !(*addr == from
+                                    && to_packet.from() == packet.to()
+                                    && to_packet.to() == packet.from())
+                            });
+                            return;
+                        }
                         self.rx_notifications
                             .push_back((assoc_id, RxNotification::Chunk(chunk)));
                     }
