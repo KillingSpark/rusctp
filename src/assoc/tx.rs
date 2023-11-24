@@ -23,6 +23,8 @@ pub struct AssociationTx {
     send_next: VecDeque<Chunk>,
 
     tsn_counter: Tsn,
+    last_acked_tsn: Tsn,
+    duplicated_acks: usize,
 
     out_buffer_limit: usize,
     current_out_buffered: usize,
@@ -61,8 +63,10 @@ struct PerStreamInfo {
     seqnum_ctr: Sequence,
 }
 
+#[derive(PartialEq, Eq)]
 enum CongestionState {
     SlowStart,
+    FastRecovery,
     CongestionAvoidance,
 }
 
@@ -74,8 +78,6 @@ struct PerDestinationInfo {
     _partial_bytes_acked: usize,
     bytes_acked_counter: usize,
     bytes_acked_start_tsn: Option<Tsn>,
-    last_acked_tsn: Tsn,
-    duplicated_acks: usize,
 }
 
 impl PerDestinationInfo {
@@ -89,8 +91,6 @@ impl PerDestinationInfo {
             _partial_bytes_acked: 0,
             bytes_acked_counter: 0,
             bytes_acked_start_tsn: None,
-            last_acked_tsn: Tsn(0),
-            duplicated_acks: 0,
         }
     }
 
@@ -100,31 +100,27 @@ impl PerDestinationInfo {
 
     fn bytes_acked(&mut self, bytes_acked: usize, up_to_tsn: Tsn) {
         self.bytes_acked_counter += bytes_acked;
+        if bytes_acked > 0 && self.state == CongestionState::FastRecovery {
+            // Fast recovery did move the tsn, go back to slowstart
+            self.change_state(CongestionState::SlowStart);
+        }
         if let Some(bytes_acked_start_tsn) = { self.bytes_acked_start_tsn } {
             if up_to_tsn >= bytes_acked_start_tsn {
                 self.adjust_cwnd();
             }
         }
-        if up_to_tsn == self.last_acked_tsn {
-            self.duplicated_acks += 1;
-            if self.duplicated_acks >= 2 {
-                self.ssthresh = self.cwnd / 2;
-                self.cwnd = self.ssthresh;
-                self.change_state(CongestionState::CongestionAvoidance);
-            }
-        } else {
-            self.last_acked_tsn = up_to_tsn;
-            self.duplicated_acks = 0;
-        }
+    }
+
+    fn enter_fast_recovery(&mut self) {
+        self.ssthresh = self.cwnd / 2;
+        self.cwnd = self.ssthresh;
+        self.change_state(CongestionState::FastRecovery);
     }
 
     fn rto_expired(&mut self) {
-        self.duplicated_acks += 1;
-        if self.duplicated_acks >= 2 {
-            self.ssthresh = self.cwnd / 2;
-            self.cwnd = usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404));
-            self.change_state(CongestionState::CongestionAvoidance);
-        }
+        self.ssthresh = self.cwnd / 2;
+        self.cwnd = usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404));
+        self.change_state(CongestionState::CongestionAvoidance);
     }
 
     fn change_state(&mut self, state: CongestionState) {
@@ -158,6 +154,9 @@ impl PerDestinationInfo {
                 if bytes_acked >= self.cwnd {
                     self.cwnd += usize::min(self.pmcds, bytes_acked);
                 }
+            }
+            CongestionState::FastRecovery => {
+                // TODO do we do anything here?
             }
         }
     }
@@ -216,6 +215,8 @@ impl AssociationTx {
             local_port,
             peer_port,
             tsn_counter: init_tsn,
+            last_acked_tsn: Tsn(0),
+            duplicated_acks: 0,
             out_buffer_limit,
             peer_rcv_window: peer_arwnd,
 
@@ -251,6 +252,11 @@ impl AssociationTx {
     }
 
     fn handle_sack(&mut self, sack: SelectiveAck, now: Instant) {
+        if self.last_acked_tsn > sack.cum_tsn {
+            // This is a reordered sack, we can safely ignore this
+            return;
+        }
+
         let mut bytes_acked = 0;
         let mut packet_acked = |acked: &ResendEntry| {
             self.current_out_buffered -= acked.data.buf.len();
@@ -288,6 +294,15 @@ impl AssociationTx {
             } else {
                 self.rto_timer = None;
             }
+        }
+        if sack.cum_tsn == self.last_acked_tsn {
+            self.duplicated_acks += 1;
+            if self.duplicated_acks >= 2 {
+                self.primary_congestion.enter_fast_recovery();
+            }
+        } else {
+            self.last_acked_tsn = sack.cum_tsn;
+            self.duplicated_acks = 0;
         }
     }
 
