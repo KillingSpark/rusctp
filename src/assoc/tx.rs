@@ -186,6 +186,7 @@ impl AssociationTx {
             let range = start..end + 1;
             self.resend_queue.iter_mut().for_each(|packet| {
                 if !range.contains(&packet.data.tsn.0) {
+                    // TODO we may only mark as many packets as fit in a PMTU and only once when we enter fast recovery
                     packet.marked_for_fast_retransmit = true;
                 }
             });
