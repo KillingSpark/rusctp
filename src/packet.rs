@@ -22,6 +22,8 @@ pub struct Packet {
     verification_tag: u32,
 }
 
+static CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
+
 impl Packet {
     pub fn new(from: u16, to: u16, verification_tag: u32) -> Self {
         Self {
@@ -37,8 +39,7 @@ impl Packet {
         let verification_tag = u32::from_be_bytes(data[4..8].try_into().ok()?);
         let checksum = u32::from_be_bytes(data[8..12].try_into().ok()?);
 
-        let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
-        let mut digest = crc.digest();
+        let mut digest = CRC.digest();
         digest.update(&data[..8]);
         digest.update(&[0, 0, 0, 0]);
         digest.update(&data[12..]);
@@ -58,8 +59,7 @@ impl Packet {
         buf.put_u16(self.to);
         buf.put_u32(self.verification_tag);
 
-        let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
-        let mut digest = crc.digest();
+        let mut digest = CRC.digest();
         digest.update(&self.from.to_be_bytes());
         digest.update(&self.to.to_be_bytes());
         digest.update(&self.verification_tag.to_be_bytes());
