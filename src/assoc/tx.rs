@@ -233,27 +233,6 @@ impl AssociationTx {
         self.id
     }
 
-    // Section 5 recommends handling of this timer
-    // https://www.rfc-editor.org/rfc/rfc2988
-    // TODO follow recommendation
-    pub fn next_timeout(&self) -> Option<Instant> {
-        self.resend_queue
-            .front()
-            .map(|packet| packet.queued_at + self.srtt.rto_duration())
-    }
-
-    pub fn handle_timeout(&mut self, timeout: Timer) {
-        if let Some(found) = self
-            .resend_queue
-            .iter_mut()
-            .find(|p| p.data.tsn == timeout.tsn)
-        {
-            self.primary_congestion.rto_expired();
-            self.srtt.rto_expired();
-            found.marked_for_resend = true;
-        }
-    }
-
     pub fn notification(&mut self, notification: TxNotification, _now: std::time::Instant) {
         match notification {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
@@ -342,6 +321,28 @@ impl AssociationTx {
             self.send_next.pop_front()
         } else {
             None
+        }
+    }
+
+    // Section 5 recommends handling of this timer
+    // https://www.rfc-editor.org/rfc/rfc2988
+    // TODO follow recommendation
+    pub fn next_timeout(&self) -> Option<Timer> {
+        self.resend_queue.front().map(|packet| Timer {
+            at: packet.queued_at + self.srtt.rto_duration(),
+            tsn: packet.data.tsn,
+        })
+    }
+
+    pub fn handle_timeout(&mut self, timeout: Timer) {
+        if let Some(found) = self
+            .resend_queue
+            .iter_mut()
+            .find(|p| p.data.tsn == timeout.tsn)
+        {
+            self.primary_congestion.rto_expired();
+            self.srtt.rto_expired();
+            found.marked_for_resend = true;
         }
     }
 

@@ -1,14 +1,14 @@
 use std::{
-    collections::HashMap,
+    collections::{BinaryHeap, HashMap},
     io,
     net::{SocketAddr, UdpSocket},
     str::FromStr,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
-    assoc::{Association, AssociationTx},
+    assoc::{Association, AssociationTx, Timer},
     packet::{Chunk, Packet},
     AssocId, Sctp, Settings, TransportAddress,
 };
@@ -19,8 +19,33 @@ struct Context {
     addrs: HashMap<TransportAddress, SocketAddr>,
     known_addrs: HashMap<SocketAddr, TransportAddress>,
     socket: UdpSocket,
-    current_timeout: Option<Duration>,
+    timeouts: BinaryHeap<Timeout>,
     logname: String,
+}
+
+struct Timeout {
+    assoc: AssocId,
+    timer: Timer,
+}
+
+impl Eq for Timeout {}
+
+impl PartialEq for Timeout {
+    fn eq(&self, other: &Self) -> bool {
+        self.timer.at().eq(&other.timer.at())
+    }
+}
+
+impl Ord for Timeout {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.timer.at().cmp(&other.timer.at())
+    }
+}
+
+impl PartialOrd for Timeout {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.timer.at().partial_cmp(&other.timer.at())
+    }
 }
 
 fn main() {
@@ -39,7 +64,7 @@ fn main() {
                 out_buffer_limit: 100 * 1024,
                 pmtu: 1500,
             }),
-            current_timeout: None,
+            timeouts: BinaryHeap::new(),
             assocs: HashMap::new(),
             addrs: HashMap::new(),
             known_addrs: HashMap::new(),
@@ -68,7 +93,7 @@ fn main() {
                 out_buffer_limit: 100 * 1024,
                 pmtu: 1500,
             }),
-            current_timeout: None,
+            timeouts: BinaryHeap::new(),
             assocs: HashMap::new(),
             addrs: HashMap::new(),
             known_addrs: HashMap::new(),
@@ -99,12 +124,29 @@ impl Context {
         let mut buf = [0u8; 1024 * 8];
         'outer: loop {
             self.handle_notifications();
-            self.socket.set_read_timeout(self.current_timeout).unwrap();
+            self.socket
+                .set_read_timeout(
+                    self.timeouts
+                        .peek()
+                        .map(|timeout| timeout.timer.at() - Instant::now()),
+                )
+                .unwrap();
             println!("{} Wait for recv", self.logname);
             match self.socket.recv_from(&mut buf) {
                 Ok((size, addr)) => self.handle_packet(&buf[..size], addr),
                 Err(err) => {
                     if err.kind() == io::ErrorKind::TimedOut {
+                        if self
+                            .timeouts
+                            .peek()
+                            .map(|timeout| Instant::now() > timeout.timer.at())
+                            .unwrap_or(false)
+                        {
+                            let timeout = self.timeouts.pop().unwrap();
+                            if let Some(assoc) = self.assocs.get_mut(&timeout.assoc) {
+                                assoc.tx_mut().handle_timeout(timeout.timer)
+                            }
+                        }
                         continue;
                     } else {
                         eprintln!("Error while receiving: {err:?}");
@@ -131,6 +173,12 @@ impl Context {
                 tx.notification(tx_notification, std::time::Instant::now());
                 if let Some(addr) = self.addrs.get(&tx.primary_path()) {
                     Self::send_everything(tx, *addr, &mut self.socket);
+                    if let Some(timeout) = tx.next_timeout() {
+                        self.timeouts.push(Timeout {
+                            assoc: id,
+                            timer: timeout,
+                        });
+                    }
                 }
             }
         }
@@ -150,6 +198,12 @@ impl Context {
                         tx.notification(tx_notification, std::time::Instant::now());
                     }
                     Self::send_everything(tx, *addr, &mut self.socket);
+                    if let Some(timeout) = tx.next_timeout() {
+                        self.timeouts.push(Timeout {
+                            assoc: id,
+                            timer: timeout,
+                        });
+                    }
                 }
             }
         }
