@@ -8,11 +8,11 @@ pub struct Srtt {
     uninited: bool,
     measure_for_tsn: Option<(Tsn, Instant)>,
     srtt: Duration,
-    rttvar: Duration,
+    rttvar: i64,
     rto: Duration,
 }
 
-const BETA: u32 = 4;
+const BETA: i64 = 4;
 const ALPHA: u32 = 8;
 
 impl Srtt {
@@ -21,7 +21,7 @@ impl Srtt {
             uninited: true,
             measure_for_tsn: None,
             srtt: Duration::from_secs(0),
-            rttvar: Duration::from_secs(0),
+            rttvar: 0,
             rto: Duration::from_secs(0),
         }
     }
@@ -46,12 +46,14 @@ impl Srtt {
         if self.uninited {
             self.uninited = false;
             self.srtt = measurement;
-            self.rttvar = measurement / 2;
+            self.rttvar = (measurement / 2).as_nanos() as i64;
         } else {
-            self.rttvar = (self.rttvar * (BETA - 1)) / BETA + (self.srtt - measurement) / BETA;
+            self.rttvar = (self.rttvar * (BETA - 1)) / BETA
+                + (self.srtt.as_nanos() as i64 - measurement.as_nanos() as i64) / BETA;
             self.srtt = (self.srtt * (ALPHA - 1)) / ALPHA + measurement / ALPHA;
         }
-        self.rto = self.srtt + self.rttvar * 4;
+        self.rto =
+            Duration::from_nanos((self.srtt.as_nanos() as i64 + self.rttvar * 4).min(0) as u64);
     }
 
     pub fn rto_duration(&self) -> Duration {
