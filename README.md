@@ -17,4 +17,4 @@ This is mostly a for-fun implementation of sctp. I am trying my hand at implemen
 ## Cant do / Roadmap
 * (Not tested) build a connection with another implementation
 * Shut down cleanly
-* Stream resets
+* Reconfiguration (https://datatracker.ietf.org/doc/html/rfc6525)
