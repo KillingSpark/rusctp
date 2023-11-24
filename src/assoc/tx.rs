@@ -9,10 +9,15 @@ use crate::{AssocId, Chunk, Packet, TransportAddress};
 
 use super::srtt::Srtt;
 
+mod congestion;
+
+#[cfg(test)]
+mod tests;
+
 pub struct AssociationTx {
     id: AssocId,
     primary_path: TransportAddress,
-    primary_congestion: PerDestinationInfo,
+    primary_congestion: congestion::PerDestinationInfo,
 
     peer_verification_tag: u32,
     local_port: u16,
@@ -63,105 +68,6 @@ struct PerStreamInfo {
     seqnum_ctr: Sequence,
 }
 
-#[derive(PartialEq, Eq)]
-enum CongestionState {
-    SlowStart,
-    FastRecovery,
-    CongestionAvoidance,
-}
-
-struct PerDestinationInfo {
-    state: CongestionState,
-    pmcds: usize,
-    cwnd: usize,
-    ssthresh: usize,
-    _partial_bytes_acked: usize,
-    bytes_acked_counter: usize,
-    bytes_acked_start_tsn: Option<Tsn>,
-}
-
-impl PerDestinationInfo {
-    fn new(pmtu: usize) -> Self {
-        let pmcds = pmtu - 12;
-        Self {
-            state: CongestionState::SlowStart,
-            pmcds,
-            cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
-            ssthresh: usize::MAX,
-            _partial_bytes_acked: 0,
-            bytes_acked_counter: 0,
-            bytes_acked_start_tsn: None,
-        }
-    }
-
-    fn send_limit(&self, current_outstanding: usize) -> usize {
-        self.cwnd.saturating_sub(current_outstanding)
-    }
-
-    fn bytes_acked(&mut self, bytes_acked: usize, up_to_tsn: Tsn) {
-        self.bytes_acked_counter += bytes_acked;
-        if bytes_acked > 0 && self.state == CongestionState::FastRecovery {
-            // Fast recovery did move the tsn, go back to slowstart
-            self.change_state(CongestionState::SlowStart);
-        }
-        if let Some(bytes_acked_start_tsn) = { self.bytes_acked_start_tsn } {
-            if up_to_tsn >= bytes_acked_start_tsn {
-                self.adjust_cwnd();
-            }
-        }
-    }
-
-    fn enter_fast_recovery(&mut self) {
-        self.ssthresh = self.cwnd / 2;
-        self.cwnd = self.ssthresh;
-        self.change_state(CongestionState::FastRecovery);
-    }
-
-    fn rto_expired(&mut self) {
-        self.ssthresh = self.cwnd / 2;
-        self.cwnd = usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404));
-        self.change_state(CongestionState::CongestionAvoidance);
-    }
-
-    fn change_state(&mut self, state: CongestionState) {
-        self.bytes_acked_start_tsn = None;
-        self.bytes_acked_counter = 0;
-        self.state = state;
-    }
-
-    fn tsn_sent(&mut self, tsn: Tsn) {
-        if self.bytes_acked_start_tsn.is_none() {
-            self.bytes_acked_start_tsn = Some(tsn);
-            self.bytes_acked_counter = 0;
-        }
-    }
-
-    fn adjust_cwnd(&mut self) {
-        let bytes_acked = self.bytes_acked_counter;
-        self.bytes_acked_counter = 0;
-        self.bytes_acked_start_tsn = None;
-        match self.state {
-            CongestionState::SlowStart => {
-                if bytes_acked >= self.cwnd {
-                    self.cwnd += usize::max(bytes_acked, usize::min(self.pmcds, bytes_acked));
-                    if self.cwnd >= self.ssthresh {
-                        self.cwnd = self.ssthresh;
-                        self.state = CongestionState::CongestionAvoidance;
-                    }
-                }
-            }
-            CongestionState::CongestionAvoidance => {
-                if bytes_acked >= self.cwnd {
-                    self.cwnd += usize::min(self.pmcds, bytes_acked);
-                }
-            }
-            CongestionState::FastRecovery => {
-                // TODO do we do anything here?
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum TxNotification {
     Send(Chunk),
@@ -209,7 +115,7 @@ impl AssociationTx {
         Self {
             id,
             primary_path,
-            primary_congestion: PerDestinationInfo::new(pmtu),
+            primary_congestion: congestion::PerDestinationInfo::new(pmtu),
 
             peer_verification_tag,
             local_port,
@@ -474,145 +380,4 @@ impl AssociationTx {
         }
         Some(packet)
     }
-}
-
-#[test]
-fn buffer_limits() {
-    let mut tx = AssociationTx::new(
-        AssocId(0),
-        AssocTxSettings {
-            primary_path: TransportAddress::Fake(0),
-            peer_verification_tag: 1234,
-            local_port: 1,
-            peer_port: 2,
-            init_tsn: Tsn(1),
-            out_streams: 1,
-            out_buffer_limit: 100,
-            peer_arwnd: 10000000,
-            pmtu: 10000,
-        },
-    );
-    let send_ten_bytes = |tx: &mut AssociationTx| {
-        tx.try_send_data(
-            Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-            0,
-            0,
-            false,
-            false,
-        )
-    };
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    // This should now fail as the buffer is full
-    assert!(send_ten_bytes(&mut tx).is_some());
-
-    let packet = tx
-        .poll_data_to_send(100, Instant::now())
-        .expect("Should return the first packet");
-    tx.poll_data_to_send(100, Instant::now())
-        .expect("Should return the second packet");
-    tx.poll_data_to_send(100, Instant::now())
-        .expect("Should return the third packet");
-
-    assert_eq!(tx.current_in_flight, 30);
-    assert!(send_ten_bytes(&mut tx).is_some());
-    assert!(send_ten_bytes(&mut tx).is_some());
-    assert!(send_ten_bytes(&mut tx).is_some());
-
-    tx.notification(
-        TxNotification::SAck((
-            SelectiveAck {
-                cum_tsn: packet.tsn,
-                a_rwnd: 1000000, // Whatever we just want to have a big receive window here
-                blocks: vec![(2, 2)],
-                duplicated_tsn: vec![],
-            },
-            std::time::Instant::now(),
-        )),
-        std::time::Instant::now(),
-    );
-    assert_eq!(tx.current_in_flight, 20);
-    tx.notification(
-        TxNotification::SAck((
-            SelectiveAck {
-                cum_tsn: packet.tsn.increase(),
-                a_rwnd: 1000000, // Whatever we just want to have a big receive window here
-                blocks: vec![(2, 2)],
-                duplicated_tsn: vec![],
-            },
-            std::time::Instant::now(),
-        )),
-        std::time::Instant::now(),
-    );
-    assert_eq!(tx.current_in_flight, 10);
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_some());
-}
-
-#[test]
-fn arwnd_limits() {
-    let mut tx = AssociationTx::new(
-        AssocId(0),
-        AssocTxSettings {
-            primary_path: TransportAddress::Fake(0),
-            peer_verification_tag: 1234,
-            local_port: 1,
-            peer_port: 2,
-            init_tsn: Tsn(1),
-            out_streams: 1,
-            out_buffer_limit: 100,
-            peer_arwnd: 20,
-            pmtu: 10000,
-        },
-    );
-    let send_ten_bytes = |tx: &mut AssociationTx| {
-        tx.try_send_data(
-            Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-            0,
-            0,
-            false,
-            false,
-        )
-    };
-    // prep packets
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
-
-    tx.notification(
-        TxNotification::SAck((
-            SelectiveAck {
-                cum_tsn: Tsn(100), // Whatever we dont care about out buffer size here
-                a_rwnd: 20,
-                blocks: vec![],
-                duplicated_tsn: vec![],
-            },
-            std::time::Instant::now(),
-        )),
-        std::time::Instant::now(),
-    );
-
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
 }
