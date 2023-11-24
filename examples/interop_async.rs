@@ -71,7 +71,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         eprintln!("Client got assoc");
         let (tx, rx) = assoc.split();
 
-        tx.send_data(Bytes::copy_from_slice(&[0u8;1400]), 0, 0, false, false)
+        tx.send_data(Bytes::copy_from_slice(&[0u8; 1400]), 0, 0, false, false)
             .await;
 
         let echo_tx = tx.clone();
@@ -159,7 +159,11 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 echo_tx.send_data(data, 0, 0, false, false).await;
                 ctr += 1;
                 if ctr % 10000 == 0 {
-                    eprintln!("{ctr} {}", (1_000_000_ * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64);
+                    eprintln!(
+                        "{ctr} {}",
+                        (1_000_000_ * bytes_ctr)
+                            / (std::time::Instant::now() - start).as_micros() as u64
+                    );
                     start = std::time::Instant::now();
                     bytes_ctr = 0;
                 }

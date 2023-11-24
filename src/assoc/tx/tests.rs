@@ -181,12 +181,12 @@ fn rto_timeout() {
     let first = tx.poll_data_to_send(100, Instant::now()).unwrap();
     // shouldn't retransmit before timeout has run out
     assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
-    
+
     // time it out
     let timeout = tx.next_timeout().unwrap();
     tx.handle_timeout(timeout);
-    
-    // now we should get a retransmission 
+
+    // now we should get a retransmission
     let second = tx.poll_data_to_send(100, Instant::now()).unwrap();
     // which is equal to the original transmission
     assert_eq!(first, second);
@@ -196,10 +196,10 @@ fn rto_timeout() {
     // give it an old timeout, this should be ignored
     tx.handle_timeout(timeout);
     assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
-    
+
     // timeout for real this time
     tx.handle_timeout(tx.next_timeout().unwrap());
-    // now we should get a retransmission 
+    // now we should get a retransmission
     let third = tx.poll_data_to_send(100, Instant::now()).unwrap();
     // which is equal to the other transmissions
     assert_eq!(second, third);
