@@ -136,6 +136,15 @@ impl Sctp {
             return HandleSpecialResult::Error;
         };
         data.advance(size);
+
+        if let Some(existing) = self.aliases.get(&AssocAlias {
+            peer_addr: from,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+        }) {
+            return HandleSpecialResult::Handled(*existing);
+        }
+
         let Some(half_open) = self.wait_cookie_ack.remove(&AssocAlias {
             peer_addr: from,
             peer_port: packet.from(),
@@ -183,8 +192,23 @@ impl Sctp {
             // -> stop processing this
             return HandleSpecialResult::Error;
         }
-        let initial_tsn = rand::thread_rng().next_u32();
-        let local_verification_tag = rand::thread_rng().next_u32();
+
+        let initial_tsn;
+        let local_verification_tag;
+        if let Some(half_open) = self.wait_init_ack.get(&AssocAlias {
+            peer_addr: from,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+        }) {
+            // Init overlap, send another init_ack with the same parameters as the init we already sent
+            initial_tsn = half_open.local_initial_tsn;
+            local_verification_tag = half_open.local_verification_tag;
+        } else {
+            // Answer with newly chosen random values
+            initial_tsn = rand::thread_rng().next_u32();
+            local_verification_tag = rand::thread_rng().next_u32();
+        }
+
         let mut cookie = Cookie {
             init_address: from,
             aliases: init.aliases,
@@ -241,6 +265,7 @@ impl Sctp {
         &mut self,
         packet: &Packet,
         data: &mut Bytes,
+        from: TransportAddress,
     ) -> HandleSpecialResult<AssocId> {
         if !Chunk::is_cookie_echo(data) {
             return HandleSpecialResult::NotRecognized;
@@ -261,6 +286,15 @@ impl Sctp {
         }
 
         data.advance(size);
+
+        if let Some(existing) = self.aliases.get(&AssocAlias {
+            peer_addr: from,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+        }) {
+            return HandleSpecialResult::Handled(*existing);
+        }
+
         let assoc_id = self.make_new_assoc(
             packet,
             &cookie.aliases,

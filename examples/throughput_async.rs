@@ -147,7 +147,9 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 }
             });
         }
-        let assoc = sctp.accept().await;
+        // Either wait for a connection or just initiate one with the same ports
+        // let assoc = sctp.accept().await;
+        let assoc = sctp.connect(fake_addr, 200, 100).await;
         eprintln!("Server got assoc");
         let (tx, rx) = assoc.split();
         let echo_tx = tx.clone();

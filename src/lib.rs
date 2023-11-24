@@ -124,7 +124,7 @@ impl Sctp {
 
         let mut new_assoc_id = None;
         // Either we have accepted a new association here
-        match self.handle_cookie_echo(&packet, &mut data) {
+        match self.handle_cookie_echo(&packet, &mut data, from) {
             HandleSpecialResult::Handled(id) => new_assoc_id = Some(id),
             HandleSpecialResult::Error => return,
             HandleSpecialResult::NotRecognized => { /* keep handling, this is allowed to carry data */
@@ -175,7 +175,7 @@ impl Sctp {
 
             match chunk {
                 Ok(chunk) => {
-                    if let Chunk::Init(_) = chunk {
+                    if let Chunk::Init(_) | Chunk::InitAck(_) = chunk {
                         // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
                     } else {
                         self.rx_notifications
