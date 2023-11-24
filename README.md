@@ -10,11 +10,11 @@ This is mostly a for-fun implementation of sctp. I am trying my hand at implemen
 
 ## Can do
 * Build a connection with another instance of itself and ping-pong packets
+* Congestion control reacting to loss
+* Retransmission of lost packets
 
 ## Cant do / Roadmap
 * (Not tested) build a connection with another implementation
-* Shut down cleanly
 * "Weird" association initialization (which is the normal case for webrtc)
-* Congestion control reacting to loss
-* Retransmission of lost packets
+* Shut down cleanly
 * Stream resets
