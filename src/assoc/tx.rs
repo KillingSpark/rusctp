@@ -1,4 +1,3 @@
-use std::time::Duration;
 use std::{collections::VecDeque, time::Instant};
 
 use bytes::{Buf, Bytes};
@@ -7,6 +6,8 @@ use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
 use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk, Packet, TransportAddress};
+
+use super::srtt::Srtt;
 
 pub struct AssociationTx {
     id: AssocId,
@@ -29,7 +30,7 @@ pub struct AssociationTx {
     per_stream: Vec<PerStreamInfo>,
 
     peer_rcv_window: u32,
-    rtt_estimate: Duration,
+    srtt: Srtt,
 }
 
 struct ResendEntry {
@@ -112,7 +113,7 @@ impl PerDestinationInfo {
         }
     }
 
-    fn rto_timer(&mut self) {
+    fn rto_expired(&mut self) {
         self.duplicated_acks += 1;
         if self.duplicated_acks >= 2 {
             self.ssthresh = self.cwnd / 2;
@@ -160,7 +161,7 @@ impl PerDestinationInfo {
 #[derive(Debug)]
 pub enum TxNotification {
     Send(Chunk),
-    SAck(SelectiveAck),
+    SAck((SelectiveAck, Instant)),
     _PrimaryPathChanged(TransportAddress),
 }
 
@@ -224,7 +225,7 @@ impl AssociationTx {
                 out_streams as usize
             ],
             current_out_buffered: 0,
-            rtt_estimate: Duration::from_secs(1),
+            srtt: Srtt::new(),
         }
     }
 
@@ -232,10 +233,13 @@ impl AssociationTx {
         self.id
     }
 
+    // Section 5 recommends handling of this timer
+    // https://www.rfc-editor.org/rfc/rfc2988
+    // TODO follow recommendation
     pub fn next_timeout(&self) -> Option<Instant> {
         self.resend_queue
             .front()
-            .map(|packet| packet.queued_at + self.rtt_estimate)
+            .map(|packet| packet.queued_at + self.srtt.rto_duration())
     }
 
     pub fn handle_timeout(&mut self, timeout: Timer) {
@@ -244,7 +248,8 @@ impl AssociationTx {
             .iter_mut()
             .find(|p| p.data.tsn == timeout.tsn)
         {
-            self.primary_congestion.rto_timer();
+            self.primary_congestion.rto_expired();
+            self.srtt.rto_expired();
             found.marked_for_resend = true;
         }
     }
@@ -254,11 +259,11 @@ impl AssociationTx {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
-            TxNotification::SAck(sack) => self.handle_sack(sack),
+            TxNotification::SAck((sack, recv_at)) => self.handle_sack(sack, recv_at),
         }
     }
 
-    pub fn handle_sack(&mut self, sack: SelectiveAck) {
+    pub fn handle_sack(&mut self, sack: SelectiveAck, now: Instant) {
         let mut bytes_acked = 0;
         let mut packet_acked = |acked: &ResendEntry| {
             self.current_out_buffered -= acked.data.buf.len();
@@ -290,6 +295,7 @@ impl AssociationTx {
         self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
         self.primary_congestion
             .bytes_acked(bytes_acked, sack.cum_tsn);
+        self.srtt.tsn_acked(sack.cum_tsn, now);
     }
 
     pub fn try_send_data(
@@ -409,6 +415,7 @@ impl AssociationTx {
         self.resend_queue
             .push_back(ResendEntry::new(packet.clone(), now));
         self.primary_congestion.tsn_sent(packet.tsn);
+        self.srtt.tsn_sent(packet.tsn, now);
         Some(packet)
     }
 }
@@ -465,12 +472,28 @@ fn buffer_limits() {
     assert!(send_ten_bytes(&mut tx).is_some());
 
     tx.notification(
-        TxNotification::SAck(SelectiveAck {
-            cum_tsn: packet.tsn,
-            a_rwnd: 1000000, // Whatever we just want to have a big receive window here
-            blocks: vec![(2, 2)],
-            duplicated_tsn: vec![],
-        }),
+        TxNotification::SAck((
+            SelectiveAck {
+                cum_tsn: packet.tsn,
+                a_rwnd: 1000000, // Whatever we just want to have a big receive window here
+                blocks: vec![(2, 2)],
+                duplicated_tsn: vec![],
+            },
+            std::time::Instant::now(),
+        )),
+        std::time::Instant::now(),
+    );
+    assert_eq!(tx.current_in_flight, 20);
+    tx.notification(
+        TxNotification::SAck((
+            SelectiveAck {
+                cum_tsn: packet.tsn.increase(),
+                a_rwnd: 1000000, // Whatever we just want to have a big receive window here
+                blocks: vec![(2, 2)],
+                duplicated_tsn: vec![],
+            },
+            std::time::Instant::now(),
+        )),
         std::time::Instant::now(),
     );
     assert_eq!(tx.current_in_flight, 10);
@@ -521,12 +544,15 @@ fn arwnd_limits() {
     assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
 
     tx.notification(
-        TxNotification::SAck(SelectiveAck {
-            cum_tsn: Tsn(100), // Whatever we dont care about out buffer size here
-            a_rwnd: 20,
-            blocks: vec![],
-            duplicated_tsn: vec![],
-        }),
+        TxNotification::SAck((
+            SelectiveAck {
+                cum_tsn: Tsn(100), // Whatever we dont care about out buffer size here
+                a_rwnd: 20,
+                blocks: vec![],
+                duplicated_tsn: vec![],
+            },
+            std::time::Instant::now(),
+        )),
         std::time::Instant::now(),
     );
 

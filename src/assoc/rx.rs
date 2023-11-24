@@ -71,13 +71,15 @@ impl AssociationRx {
     fn handle_chunk(
         &mut self,
         chunk: Chunk,
-        _now: std::time::Instant,
+        now: std::time::Instant,
     ) -> Option<std::time::Instant> {
         match chunk {
             Chunk::Data(data) => {
                 self.handle_data_chunk(data);
             }
-            Chunk::SAck(sack) => self.tx_notifications.push_back(TxNotification::SAck(sack)),
+            Chunk::SAck(sack) => self
+                .tx_notifications
+                .push_back(TxNotification::SAck((sack, now))),
             _ => {
                 todo!()
             }
