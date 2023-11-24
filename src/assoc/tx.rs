@@ -31,6 +31,9 @@ pub struct AssociationTx {
 
     peer_rcv_window: u32,
     srtt: Srtt,
+
+    timer_ctr: u64,
+    rto_timer: Option<Timer>,
 }
 
 struct ResendEntry {
@@ -177,8 +180,9 @@ pub struct AssocTxSettings {
     pub pmtu: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Timer {
-    tsn: Tsn,
+    marker: u64,
     at: Instant,
 }
 
@@ -226,6 +230,8 @@ impl AssociationTx {
             ],
             current_out_buffered: 0,
             srtt: Srtt::new(),
+            rto_timer: None,
+            timer_ctr: 0,
         }
     }
 
@@ -275,6 +281,13 @@ impl AssociationTx {
         self.primary_congestion
             .bytes_acked(bytes_acked, sack.cum_tsn);
         self.srtt.tsn_acked(sack.cum_tsn, now);
+        if bytes_acked > 0 {
+            if self.current_in_flight > 0 {
+                self.set_timeout(now);
+            } else {
+                self.rto_timer = None;
+            }
+        }
     }
 
     pub fn try_send_data(
@@ -326,24 +339,32 @@ impl AssociationTx {
 
     // Section 5 recommends handling of this timer
     // https://www.rfc-editor.org/rfc/rfc2988
-    // TODO follow recommendation
     pub fn next_timeout(&self) -> Option<Timer> {
-        self.resend_queue.front().map(|packet| Timer {
-            at: packet.queued_at + self.srtt.rto_duration(),
-            tsn: packet.data.tsn,
-        })
+        self.rto_timer
     }
 
     pub fn handle_timeout(&mut self, timeout: Timer) {
-        if let Some(found) = self
-            .resend_queue
-            .iter_mut()
-            .find(|p| p.data.tsn == timeout.tsn)
-        {
-            self.primary_congestion.rto_expired();
-            self.srtt.rto_expired();
-            found.marked_for_resend = true;
+        self.primary_congestion.rto_expired();
+        self.srtt.rto_expired();
+        if let Some(current_timer) = self.rto_timer {
+            if current_timer.marker == timeout.marker {
+                self.resend_queue.iter_mut().for_each(|p| {
+                    if p.queued_at + self.srtt.rto_duration() < timeout.at {
+                        p.marked_for_resend = true;
+                    }
+                });
+            }
         }
+        // TODO do we trust this or do we take another "now" Instant in the hope that it will be more precise?
+        self.set_timeout(timeout.at);
+    }
+
+    fn set_timeout(&mut self, now: Instant) {
+        self.rto_timer = Some(Timer {
+            at: now + self.srtt.rto_duration(),
+            marker: self.timer_ctr,
+        });
+        self.timer_ctr = self.timer_ctr.wrapping_add(1);
     }
 
     // Collect next chunk if it would still fit inside the limit
@@ -417,6 +438,9 @@ impl AssociationTx {
             .push_back(ResendEntry::new(packet.clone(), now));
         self.primary_congestion.tsn_sent(packet.tsn);
         self.srtt.tsn_sent(packet.tsn, now);
+        if self.rto_timer.is_none() {
+            self.set_timeout(now);
+        }
         Some(packet)
     }
 }
