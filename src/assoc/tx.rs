@@ -39,8 +39,9 @@ pub struct AssociationTx {
 struct ResendEntry {
     queued_at: Instant,
     data: DataChunk,
-    marked_received: bool,
-    marked_for_resend: bool,
+    marked_for_retransmit: bool,
+    marked_for_fast_retransmit: bool,
+    marked_was_fast_retransmit: bool,
 }
 
 impl ResendEntry {
@@ -48,8 +49,9 @@ impl ResendEntry {
         Self {
             queued_at: now,
             data,
-            marked_for_resend: false,
-            marked_received: false,
+            marked_for_retransmit: false,
+            marked_for_fast_retransmit: false,
+            marked_was_fast_retransmit: false,
         }
     }
 }
@@ -248,7 +250,7 @@ impl AssociationTx {
         }
     }
 
-    pub fn handle_sack(&mut self, sack: SelectiveAck, now: Instant) {
+    fn handle_sack(&mut self, sack: SelectiveAck, now: Instant) {
         let mut bytes_acked = 0;
         let mut packet_acked = |acked: &ResendEntry| {
             self.current_out_buffered -= acked.data.buf.len();
@@ -271,9 +273,8 @@ impl AssociationTx {
 
             let range = start..end + 1;
             self.resend_queue.iter_mut().for_each(|packet| {
-                if range.contains(&packet.data.tsn.0) {
-                    packet.marked_received = true;
-                    packet.marked_for_resend = false;
+                if !range.contains(&packet.data.tsn.0) {
+                    packet.marked_for_fast_retransmit = true;
                 }
             });
         }
@@ -350,7 +351,7 @@ impl AssociationTx {
             if current_timer.marker == timeout.marker {
                 self.resend_queue.iter_mut().for_each(|p| {
                     if p.queued_at + self.srtt.rto_duration() < timeout.at {
-                        p.marked_for_resend = true;
+                        p.marked_for_retransmit = true;
                     }
                 });
             }
@@ -372,10 +373,11 @@ impl AssociationTx {
         // The data chunk header always takes 16 bytes
         let data_limit = data_limit - 16;
 
-        // first send any outstanding packets that have been marked for a resend and fit in the limit
-        if let Some(front) = self.resend_queue.front() {
-            if front.marked_for_resend {
+        // first send any outstanding packets that have been marked for a fast retransmit and fit in the limit
+        if let Some(front) = self.resend_queue.front_mut() {
+            if front.marked_for_fast_retransmit && !front.marked_was_fast_retransmit {
                 if front.data.buf.len() <= data_limit {
+                    front.marked_was_fast_retransmit = true;
                     return Some(front.data.clone());
                 } else {
                     return None;
@@ -388,6 +390,20 @@ impl AssociationTx {
             data_limit,
             self.primary_congestion.send_limit(self.current_in_flight),
         );
+
+        if let Some(front) = self.resend_queue.front_mut() {
+            if front.marked_for_retransmit {
+                if front.data.buf.len() <= data_limit {
+                    let rtx = front.data.clone();
+                    if self.rto_timer.is_none() {
+                        self.set_timeout(now);
+                    }
+                    return Some(rtx);
+                } else {
+                    return None;
+                }
+            }
+        }
 
         let front = self.out_queue.front()?;
         let front_buf_len = front.buf.len();
