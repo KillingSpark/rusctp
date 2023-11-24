@@ -48,12 +48,12 @@ impl RxNotification {
 pub enum PollDataResult {
     Error(PollDataError),
     NoneAvailable,
-    Data(Bytes)
+    Data(Bytes),
 }
 
 #[derive(Debug)]
 pub enum PollDataError {
-    Closed
+    Closed,
 }
 
 impl AssociationRx {
@@ -165,7 +165,6 @@ impl AssociationRx {
         if self.closed {
             PollDataResult::Error(PollDataError::Closed)
         } else {
-
             if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
                 if let Some((seq, _)) = stream_info.queue.first_key_value() {
                     if *seq == stream_info.seqnum_ctr.increase() {

@@ -75,7 +75,10 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         tokio::spawn(async move {
             let data = Bytes::copy_from_slice(&[0u8; 1400]);
             loop {
-                echo_tx.send_data(data.clone(), 0, 0, false, false).await.unwrap()
+                echo_tx
+                    .send_data(data.clone(), 0, 0, false, false)
+                    .await
+                    .unwrap()
             }
         });
         tokio::spawn(async move {
@@ -156,7 +159,10 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         tokio::spawn(async move {
             let data = Bytes::copy_from_slice(&[0u8; 1400]);
             loop {
-                echo_tx.send_data(data.clone(), 0, 0, false, false).await.unwrap()
+                echo_tx
+                    .send_data(data.clone(), 0, 0, false, false)
+                    .await
+                    .unwrap()
             }
         });
         tokio::spawn(async move {
