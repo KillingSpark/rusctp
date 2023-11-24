@@ -173,10 +173,10 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
                 ctr += 1;
-                if ctr % 10000 == 0 {
+                if ctr % 10_000 == 0 {
                     eprintln!(
                         "{ctr} {}",
-                        (1_000_000_ * bytes_ctr)
+                        (1_000_000 * bytes_ctr)
                             / (std::time::Instant::now() - start).as_micros() as u64
                     );
                     start = std::time::Instant::now();
