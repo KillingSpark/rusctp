@@ -3,7 +3,7 @@ use std::time::Instant;
 use bytes::Bytes;
 
 use crate::{
-    assoc::{AssocTxSettings, AssociationTx, TxNotification},
+    assoc::{AssocTxSettings, AssociationTx, SendError, SendErrorKind, TxNotification},
     packet::{sack::SelectiveAck, Tsn},
     AssocId, TransportAddress,
 };
@@ -33,18 +33,24 @@ fn buffer_limits() {
             false,
         )
     };
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
     // This should now fail as the buffer is full
-    assert!(send_ten_bytes(&mut tx).is_some());
+    assert!(matches!(
+        send_ten_bytes(&mut tx),
+        Err(SendError {
+            data: _,
+            kind: SendErrorKind::BufferFull
+        })
+    ));
 
     let packet = tx
         .poll_data_to_send(100, Instant::now())
@@ -55,9 +61,27 @@ fn buffer_limits() {
         .expect("Should return the third packet");
 
     assert_eq!(tx.current_in_flight, 30);
-    assert!(send_ten_bytes(&mut tx).is_some());
-    assert!(send_ten_bytes(&mut tx).is_some());
-    assert!(send_ten_bytes(&mut tx).is_some());
+    assert!(matches!(
+        send_ten_bytes(&mut tx),
+        Err(SendError {
+            data: _,
+            kind: SendErrorKind::BufferFull
+        })
+    ));
+    assert!(matches!(
+        send_ten_bytes(&mut tx),
+        Err(SendError {
+            data: _,
+            kind: SendErrorKind::BufferFull
+        })
+    ));
+    assert!(matches!(
+        send_ten_bytes(&mut tx),
+        Err(SendError {
+            data: _,
+            kind: SendErrorKind::BufferFull
+        })
+    ));
 
     tx.notification(
         TxNotification::SAck((
@@ -85,9 +109,15 @@ fn buffer_limits() {
         std::time::Instant::now(),
     );
     assert_eq!(tx.current_in_flight, 10);
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_some());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(matches!(
+        send_ten_bytes(&mut tx),
+        Err(SendError {
+            data: _,
+            kind: SendErrorKind::BufferFull
+        })
+    ));
 }
 
 #[test]
@@ -116,16 +146,16 @@ fn arwnd_limits() {
         )
     };
     // prep packets
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
-    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
+    assert!(send_ten_bytes(&mut tx).is_ok());
 
     assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
     assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
@@ -175,7 +205,7 @@ fn rto_timeout() {
         )
     };
     // prep packet
-    assert!(send_ten_bytes(&mut tx).is_none());
+    assert!(send_ten_bytes(&mut tx).is_ok());
 
     // take first, this is the "original" transmission
     let first = tx.poll_data_to_send(100, Instant::now()).unwrap();

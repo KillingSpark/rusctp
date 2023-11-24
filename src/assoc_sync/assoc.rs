@@ -8,6 +8,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
+    assoc::{PollDataError, PollDataResult, SendError, SendErrorKind},
     packet::{Chunk, Packet},
     AssocId, Settings, TransportAddress,
 };
@@ -189,17 +190,25 @@ impl AssociationTx {
         ppid: u32,
         immediate: bool,
         unordered: bool,
-    ) {
+    ) -> Result<(), SendError> {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            if let Some(returned) = wrapped.try_send_data(data, stream, ppid, immediate, unordered)
-            {
-                data = returned;
-            } else {
-                self.signal.notify_all();
-                break;
+            match wrapped.try_send_data(data, stream, ppid, immediate, unordered) {
+                Ok(()) => {
+                    self.signal.notify_all();
+                    break Ok(());
+                }
+                Err(SendError {
+                    data: returned,
+                    kind: SendErrorKind::BufferFull,
+                }) => {
+                    data = returned;
+                    wrapped = self.signal.wait(wrapped).unwrap();
+                }
+                Err(err) => {
+                    break Err(err);
+                }
             }
-            wrapped = self.signal.wait(wrapped).unwrap();
         }
     }
 
@@ -229,13 +238,14 @@ impl AssociationTx {
 }
 
 impl AssociationRx {
-    pub fn recv_data(&self, stream: u16) -> Bytes {
+    pub fn recv_data(&self, stream: u16) -> Result<Bytes, PollDataError> {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            if let Some(data) = wrapped.poll_data(stream) {
-                return data;
+            match wrapped.poll_data(stream) {
+                PollDataResult::NoneAvailable => wrapped = self.signal.wait(wrapped).unwrap(),
+                PollDataResult::Data(data) => return Ok(data),
+                PollDataResult::Error(err) => return Err(err),
             }
-            wrapped = self.signal.wait(wrapped).unwrap();
         }
     }
 }

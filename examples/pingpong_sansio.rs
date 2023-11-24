@@ -8,7 +8,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
-    assoc::{Association, AssociationTx, Timer},
+    assoc::{Association, AssociationTx, PollDataResult, Timer},
     packet::{Chunk, Packet},
     AssocId, Sctp, Settings, TransportAddress,
 };
@@ -190,8 +190,12 @@ impl Context {
                     rx.notification(rx_notification, std::time::Instant::now());
 
                     // Echo back data we receive
-                    if let Some(data) = rx.poll_data(0) {
-                        tx.try_send_data(data, 0, 0, false, false);
+                    match rx.poll_data(0) {
+                        PollDataResult::Data(data) => {
+                            tx.try_send_data(data, 0, 0, false, false).unwrap();
+                        }
+                        PollDataResult::NoneAvailable => { /* ignore */ }
+                        PollDataResult::Error(err) => panic!("{:?}", err),
                     }
 
                     for tx_notification in rx.tx_notifications() {
@@ -227,13 +231,16 @@ impl Context {
 
         if let Some(mut assoc) = self.sctp.new_assoc() {
             eprintln!("{} got a new association", self.logname);
-            assoc.tx_mut().try_send_data(
-                Bytes::copy_from_slice(&b"This is cool data"[..]),
-                0,
-                0,
-                false,
-                false,
-            );
+            assoc
+                .tx_mut()
+                .try_send_data(
+                    Bytes::copy_from_slice(&b"This is cool data"[..]),
+                    0,
+                    0,
+                    false,
+                    false,
+                )
+                .unwrap();
             self.assocs.insert(assoc.id(), assoc);
             self.addrs.insert(fake_addr, from);
         }

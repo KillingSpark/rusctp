@@ -75,12 +75,12 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         tokio::spawn(async move {
             let data = Bytes::copy_from_slice(&[0u8; 1400]);
             loop {
-                echo_tx.send_data(data.clone(), 0, 0, false, false).await
+                echo_tx.send_data(data.clone(), 0, 0, false, false).await.unwrap()
             }
         });
         tokio::spawn(async move {
             loop {
-                rx.recv_data(0).await;
+                rx.recv_data(0).await.unwrap();
             }
         });
         loop {
@@ -156,7 +156,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         tokio::spawn(async move {
             let data = Bytes::copy_from_slice(&[0u8; 1400]);
             loop {
-                echo_tx.send_data(data.clone(), 0, 0, false, false).await
+                echo_tx.send_data(data.clone(), 0, 0, false, false).await.unwrap()
             }
         });
         tokio::spawn(async move {
@@ -164,7 +164,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             let mut bytes_ctr = 0u64;
             let mut start = std::time::Instant::now();
             loop {
-                let data = rx.recv_data(0).await;
+                let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
                 ctr += 1;
                 if ctr % 10000 == 0 {

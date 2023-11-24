@@ -72,13 +72,14 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         let (tx, rx) = assoc.split();
 
         tx.send_data(Bytes::copy_from_slice(&b"Coolio"[..]), 0, 0, false, false)
-            .await;
+            .await
+            .unwrap();
 
         let echo_tx = tx.clone();
         tokio::spawn(async move {
             loop {
-                let data = rx.recv_data(0).await;
-                echo_tx.send_data(data, 0, 0, false, false).await
+                let data = rx.recv_data(0).await.unwrap();
+                echo_tx.send_data(data, 0, 0, false, false).await.unwrap()
             }
         });
         loop {
@@ -151,8 +152,8 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         let echo_tx = tx.clone();
         tokio::spawn(async move {
             loop {
-                let data = rx.recv_data(0).await;
-                echo_tx.send_data(data, 0, 0, false, false).await;
+                let data = rx.recv_data(0).await.unwrap();
+                echo_tx.send_data(data, 0, 0, false, false).await.unwrap();
             }
         });
         loop {

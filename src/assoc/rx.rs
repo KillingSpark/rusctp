@@ -21,6 +21,8 @@ pub struct AssociationRx {
 
     in_buffer_limit: usize,
     current_in_buffer: usize,
+
+    closed: bool,
 }
 
 struct PerStreamInfo {
@@ -42,6 +44,18 @@ impl RxNotification {
     }
 }
 
+#[derive(Debug)]
+pub enum PollDataResult {
+    Error(PollDataError),
+    NoneAvailable,
+    Data(Bytes)
+}
+
+#[derive(Debug)]
+pub enum PollDataError {
+    Closed
+}
+
 impl AssociationRx {
     pub(crate) fn new(id: AssocId, init_tsn: Tsn, in_streams: u16, in_buffer_limit: usize) -> Self {
         Self {
@@ -61,6 +75,8 @@ impl AssociationRx {
 
             in_buffer_limit,
             current_in_buffer: 0,
+
+            closed: false,
         }
     }
 
@@ -90,6 +106,10 @@ impl AssociationRx {
             Chunk::SAck(sack) => self
                 .tx_notifications
                 .push_back(TxNotification::SAck((sack, now))),
+            Chunk::Abort => {
+                self.closed = true;
+                self.tx_notifications.push_back(TxNotification::Abort)
+            }
             _ => {
                 todo!()
             }
@@ -141,17 +161,22 @@ impl AssociationRx {
         }
     }
 
-    pub fn poll_data(&mut self, stream_id: u16) -> Option<Bytes> {
-        if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
-            if let Some((seq, _)) = stream_info.queue.first_key_value() {
-                if *seq == stream_info.seqnum_ctr.increase() {
-                    stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
-                    let (_, data) = stream_info.queue.pop_first().unwrap();
-                    self.current_in_buffer -= data.buf.len();
-                    return Some(data.buf);
+    pub fn poll_data(&mut self, stream_id: u16) -> PollDataResult {
+        if self.closed {
+            PollDataResult::Error(PollDataError::Closed)
+        } else {
+
+            if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
+                if let Some((seq, _)) = stream_info.queue.first_key_value() {
+                    if *seq == stream_info.seqnum_ctr.increase() {
+                        stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
+                        let (_, data) = stream_info.queue.pop_first().unwrap();
+                        self.current_in_buffer -= data.buf.len();
+                        return PollDataResult::Data(data.buf);
+                    }
                 }
             }
+            PollDataResult::NoneAvailable
         }
-        None
     }
 }

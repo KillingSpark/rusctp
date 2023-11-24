@@ -9,7 +9,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
-    assoc::Timer,
+    assoc::{PollDataError, PollDataResult, SendError, SendErrorKind, Timer},
     packet::{Chunk, Packet},
     AssocId, Settings, TransportAddress,
 };
@@ -241,7 +241,7 @@ impl AssociationTx {
         ppid: u32,
         immediate: bool,
         unordered: bool,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = Result<(), SendError>> {
         struct SendFuture {
             tx: Arc<AssociationTx>,
             data: Option<Bytes>,
@@ -251,7 +251,7 @@ impl AssociationTx {
             unordered: bool,
         }
         impl Future for SendFuture {
-            type Output = ();
+            type Output = Result<(), SendError>;
 
             fn poll(
                 mut self: std::pin::Pin<&mut Self>,
@@ -260,22 +260,29 @@ impl AssociationTx {
                 let data = self.as_mut().data.take().unwrap();
                 let mut wrapped = self.tx.wrapped.lock().unwrap();
 
-                if let Some(returned) = wrapped.tx.try_send_data(
+                match wrapped.tx.try_send_data(
                     data,
                     self.stream,
                     self.ppid,
                     self.immediate,
                     self.unordered,
                 ) {
-                    wrapped.send_wakers.push(cx.waker().to_owned());
-                    drop(wrapped);
-                    self.data = Some(returned);
-                    std::task::Poll::Pending
-                } else {
-                    for waker in wrapped.poll_wakers.drain(..) {
-                        waker.wake();
+                    Ok(()) => {
+                        for waker in wrapped.poll_wakers.drain(..) {
+                            waker.wake();
+                        }
+                        std::task::Poll::Ready(Ok(()))
                     }
-                    std::task::Poll::Ready(())
+                    Err(SendError {
+                        data,
+                        kind: SendErrorKind::BufferFull,
+                    }) => {
+                        wrapped.send_wakers.push(cx.waker().to_owned());
+                        drop(wrapped);
+                        self.data = Some(data);
+                        std::task::Poll::Pending
+                    }
+                    Err(err) => std::task::Poll::Ready(Err(err)),
                 }
             }
         }
@@ -333,28 +340,33 @@ impl AssociationTx {
 }
 
 impl AssociationRx {
-    pub fn recv_data(self: &Arc<AssociationRx>, stream: u16) -> impl Future<Output = Bytes> {
+    pub fn recv_data(
+        self: &Arc<AssociationRx>,
+        stream: u16,
+    ) -> impl Future<Output = Result<Bytes, PollDataError>> {
         struct RecvFuture {
             rx: Arc<AssociationRx>,
             stream: u16,
         }
         impl Future for RecvFuture {
-            type Output = Bytes;
+            type Output = Result<Bytes, PollDataError>;
 
             fn poll(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.rx.wrapped.lock().unwrap();
-                if let Some(data) = wrapped.rx.poll_data(self.stream) {
-                    std::task::Poll::Ready(data)
-                } else {
-                    wrapped
-                        .recv_wakers
-                        .entry(self.stream)
-                        .or_default()
-                        .push(cx.waker().to_owned());
-                    std::task::Poll::Pending
+                match wrapped.rx.poll_data(self.stream) {
+                    PollDataResult::Data(data) => std::task::Poll::Ready(Ok(data)),
+                    PollDataResult::NoneAvailable => {
+                        wrapped
+                            .recv_wakers
+                            .entry(self.stream)
+                            .or_default()
+                            .push(cx.waker().to_owned());
+                        std::task::Poll::Pending
+                    }
+                    PollDataResult::Error(err) => std::task::Poll::Ready(Err(err)),
                 }
             }
         }

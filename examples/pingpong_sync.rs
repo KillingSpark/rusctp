@@ -54,12 +54,13 @@ fn main() {
 
         assoc
             .0
-            .send_data(Bytes::copy_from_slice(&b"Coolio"[..]), 0, 0, false, false);
+            .send_data(Bytes::copy_from_slice(&b"Coolio"[..]), 0, 0, false, false)
+            .unwrap();
 
         std::thread::spawn(move || loop {
-            let data = assoc.1.recv_data(0);
+            let data = assoc.1.recv_data(0).unwrap();
             eprintln!("Received: {data:?}");
-            retx.send_data(data, 0, 0, false, false);
+            retx.send_data(data, 0, 0, false, false).unwrap();
         });
 
         loop {
@@ -108,9 +109,9 @@ fn main() {
         let retx = assoc.0.clone();
 
         std::thread::spawn(move || loop {
-            let data = assoc.1.recv_data(0);
+            let data = assoc.1.recv_data(0).unwrap();
             eprintln!("Received: {data:?}");
-            retx.send_data(data, 0, 0, false, false);
+            retx.send_data(data, 0, 0, false, false).unwrap();
         });
 
         loop {

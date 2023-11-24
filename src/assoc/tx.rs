@@ -41,6 +41,8 @@ pub struct AssociationTx {
 
     timer_ctr: u64,
     rto_timer: Option<Timer>,
+
+    peer_closed: bool,
 }
 
 struct ResendEntry {
@@ -72,6 +74,7 @@ struct PerStreamInfo {
 pub enum TxNotification {
     Send(Chunk),
     SAck((SelectiveAck, Instant)),
+    Abort,
     _PrimaryPathChanged(TransportAddress),
 }
 
@@ -97,6 +100,19 @@ impl Timer {
     pub fn at(&self) -> Instant {
         self.at
     }
+}
+
+#[derive(Debug)]
+pub enum SendErrorKind {
+    PeerClosed,
+    BufferFull,
+    UnknownStream,
+}
+
+#[derive(Debug)]
+pub struct SendError {
+    pub data: Bytes,
+    pub kind: SendErrorKind,
 }
 
 impl AssociationTx {
@@ -141,6 +157,7 @@ impl AssociationTx {
             srtt: Srtt::new(),
             rto_timer: None,
             timer_ctr: 0,
+            peer_closed: false,
         }
     }
 
@@ -154,6 +171,7 @@ impl AssociationTx {
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
             TxNotification::SAck((sack, recv_at)) => self.handle_sack(sack, recv_at),
+            TxNotification::Abort => { /* TODO */ }
         }
     }
 
@@ -220,12 +238,24 @@ impl AssociationTx {
         ppid: u32,
         immediate: bool,
         unordered: bool,
-    ) -> Option<Bytes> {
+    ) -> Result<(), SendError> {
+        if self.peer_closed {
+            return Err(SendError {
+                data,
+                kind: SendErrorKind::PeerClosed,
+            });
+        }
         if self.current_out_buffered + data.len() > self.out_buffer_limit {
-            return Some(data);
+            return Err(SendError {
+                kind: SendErrorKind::BufferFull,
+                data,
+            });
         }
         let Some(stream_info) = self.per_stream.get_mut(stream as usize) else {
-            return Some(data);
+            return Err(SendError {
+                kind: SendErrorKind::UnknownStream,
+                data,
+            });
         };
         self.current_out_buffered += data.len();
         self.out_queue.push_back(DataChunk {
@@ -240,7 +270,7 @@ impl AssociationTx {
             end: true,
         });
         stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
-        None
+        Ok(())
     }
 
     pub fn packet_header(&self) -> Packet {
