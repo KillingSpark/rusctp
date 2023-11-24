@@ -46,7 +46,7 @@ impl Sctp {
     fn create_init_chunk(&mut self, local_verification_tag: u32, initial_tsn: u32) -> InitChunk {
         InitChunk {
             initiate_tag: local_verification_tag,
-            a_rwnd: 100 * 1024, // TODO
+            a_rwnd: self.settings.in_buffer_limit as u32,
             outbound_streams: self.settings.outgoing_streams,
             inbound_streams: self.settings.outgoing_streams,
             initial_tsn,
@@ -221,9 +221,9 @@ impl Sctp {
     ) -> InitAck {
         InitAck {
             initiate_tag: local_verification_tag,
-            a_rwnd: 100 * 1024,    // TODO
-            outbound_streams: 100, // TODO
-            inbound_streams: 100,  //TODO
+            a_rwnd: self.settings.in_buffer_limit as u32,
+            outbound_streams: self.settings.outgoing_streams,
+            inbound_streams: self.settings.incoming_streams,
             initial_tsn,
             cookie,
             unrecognized,
