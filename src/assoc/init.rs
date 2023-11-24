@@ -14,6 +14,21 @@ use super::{AssocTxSettings, Association, TxNotification};
 
 // Code for actively initializing an association
 
+pub enum HandleSpecialResult<T> {
+    NotRecognized,
+    Handled(T),
+    Error,
+}
+
+impl<T> HandleSpecialResult<T> {
+    pub fn handled_or_error(&self) -> bool {
+        matches!(
+            self,
+            HandleSpecialResult::Handled(_) | HandleSpecialResult::Error
+        )
+    }
+}
+
 impl Sctp {
     pub fn init_association(
         &mut self,
@@ -63,52 +78,49 @@ impl Sctp {
         packet: &Packet,
         data: &mut Bytes,
         from: TransportAddress,
-    ) -> bool {
+    ) -> HandleSpecialResult<()> {
         if !Chunk::is_init_ack(data) {
-            return false;
+            return HandleSpecialResult::NotRecognized;
         }
-        let (size, Ok(chunk)) = Chunk::parse(data) else {
-            return false;
+        let (size, Ok(Chunk::InitAck(init_ack))) = Chunk::parse(data) else {
+            return HandleSpecialResult::Error;
         };
-        if let Chunk::InitAck(init_ack) = chunk {
-            if size != data.len() {
-                // This is illegal, the init_ack needs to be the only chunk in the packet
-                // -> stop processing this
-                return true;
-            }
-            let alias = AssocAlias {
-                peer_addr: from,
-                peer_port: packet.from(),
-                local_port: packet.to(),
-            };
-            let Some(half_open) = self.wait_init_ack.remove(&alias) else {
-                return true;
-            };
-            self.wait_cookie_ack.insert(
-                alias,
-                crate::WaitCookieAck {
-                    peer_verification_tag: init_ack.initiate_tag,
-                    local_verification_tag: half_open.local_verification_tag,
-                    aliases: init_ack.aliases,
-                    original_address: from,
-                    local_initial_tsn: half_open.local_initial_tsn,
-                    peer_initial_tsn: init_ack.initial_tsn,
-                    local_in_streams: self.settings.incoming_streams,
-                    peer_in_streams: init_ack.inbound_streams,
-                    local_out_streams: self.settings.outgoing_streams,
-                    peer_out_streams: init_ack.outbound_streams,
-                    peer_arwnd: init_ack.a_rwnd,
-                },
-            );
-            self.send_immediate.push_back((
-                from,
-                Packet::new(packet.to(), packet.from(), init_ack.initiate_tag),
-                Chunk::StateCookie(init_ack.cookie),
-            ));
-            true
-        } else {
-            false
+
+        if size != data.len() {
+            // This is illegal, the init_ack needs to be the only chunk in the packet
+            // -> stop processing this
+            return HandleSpecialResult::Error;
         }
+        let alias = AssocAlias {
+            peer_addr: from,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+        };
+        let Some(half_open) = self.wait_init_ack.remove(&alias) else {
+            return HandleSpecialResult::Error;
+        };
+        self.wait_cookie_ack.insert(
+            alias,
+            crate::WaitCookieAck {
+                peer_verification_tag: init_ack.initiate_tag,
+                local_verification_tag: half_open.local_verification_tag,
+                aliases: init_ack.aliases,
+                original_address: from,
+                local_initial_tsn: half_open.local_initial_tsn,
+                peer_initial_tsn: init_ack.initial_tsn,
+                local_in_streams: self.settings.incoming_streams,
+                peer_in_streams: init_ack.inbound_streams,
+                local_out_streams: self.settings.outgoing_streams,
+                peer_out_streams: init_ack.outbound_streams,
+                peer_arwnd: init_ack.a_rwnd,
+            },
+        );
+        self.send_immediate.push_back((
+            from,
+            Packet::new(packet.to(), packet.from(), init_ack.initiate_tag),
+            Chunk::StateCookie(init_ack.cookie),
+        ));
+        HandleSpecialResult::Handled(())
     }
 
     pub(crate) fn handle_cookie_ack(
@@ -116,43 +128,41 @@ impl Sctp {
         packet: &Packet,
         data: &mut Bytes,
         from: TransportAddress,
-    ) -> Option<AssocId> {
+    ) -> HandleSpecialResult<AssocId> {
         if !Chunk::is_cookie_ack(data) {
-            return None;
+            return HandleSpecialResult::NotRecognized;
         }
-        let (size, Ok(chunk)) = Chunk::parse(data) else {
-            return None;
+        let (size, Ok(Chunk::StateCookieAck)) = Chunk::parse(data) else {
+            return HandleSpecialResult::Error;
         };
-        if let Chunk::StateCookieAck = chunk {
-            data.advance(size);
-            let half_open = self.wait_cookie_ack.remove(&AssocAlias {
-                peer_addr: from,
-                peer_port: packet.from(),
-                local_port: packet.to(),
-            })?;
+        data.advance(size);
+        let Some(half_open) = self.wait_cookie_ack.remove(&AssocAlias {
+            peer_addr: from,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+        }) else {
+            return HandleSpecialResult::Error;
+        };
 
-            let assoc_id = self.make_new_assoc(
-                packet,
-                &half_open.aliases,
-                half_open.local_verification_tag,
-                half_open.peer_initial_tsn,
-                u16::min(half_open.local_in_streams, half_open.peer_in_streams),
-                AssocTxSettings {
-                    primary_path: half_open.original_address,
-                    peer_verification_tag: half_open.peer_verification_tag,
-                    local_port: packet.to(),
-                    peer_port: packet.from(),
-                    init_tsn: Tsn(half_open.local_initial_tsn),
-                    out_streams: u16::min(half_open.local_out_streams, half_open.peer_out_streams),
-                    out_buffer_limit: self.settings.out_buffer_limit,
-                    peer_arwnd: half_open.peer_arwnd,
-                    pmtu: self.settings.pmtu,
-                },
-            );
-            Some(assoc_id)
-        } else {
-            None
-        }
+        let assoc_id = self.make_new_assoc(
+            packet,
+            &half_open.aliases,
+            half_open.local_verification_tag,
+            half_open.peer_initial_tsn,
+            u16::min(half_open.local_in_streams, half_open.peer_in_streams),
+            AssocTxSettings {
+                primary_path: half_open.original_address,
+                peer_verification_tag: half_open.peer_verification_tag,
+                local_port: packet.to(),
+                peer_port: packet.from(),
+                init_tsn: Tsn(half_open.local_initial_tsn),
+                out_streams: u16::min(half_open.local_out_streams, half_open.peer_out_streams),
+                out_buffer_limit: self.settings.out_buffer_limit,
+                peer_arwnd: half_open.peer_arwnd,
+                pmtu: self.settings.pmtu,
+            },
+        );
+        HandleSpecialResult::Handled(assoc_id)
     }
 
     /// Returns true if the packet should not be processed further
@@ -161,55 +171,49 @@ impl Sctp {
         packet: &Packet,
         data: &Bytes,
         from: TransportAddress,
-    ) -> bool {
+    ) -> HandleSpecialResult<()> {
         if !Chunk::is_init(data) {
-            return false;
+            return HandleSpecialResult::NotRecognized;
         }
-        let (size, Ok(chunk)) = Chunk::parse(data) else {
-            // Does not parse correctly.
-            // Handling this correctly is done in process_chunks.
-            return false;
+        let (size, Ok(Chunk::Init(init))) = Chunk::parse(data) else {
+            return HandleSpecialResult::Error;
         };
-        if let Chunk::Init(init) = chunk {
-            if size != data.len() {
-                // This is illegal, the init needs to be the only chunk in the packet
-                // -> stop processing this
-                return true;
-            }
-            let initial_tsn = rand::thread_rng().next_u32();
-            let local_verification_tag = rand::thread_rng().next_u32();
-            let mut cookie = Cookie {
-                init_address: from,
-                aliases: init.aliases,
-                peer_port: packet.from(),
-                local_port: packet.to(),
-                local_verification_tag,
-                peer_verification_tag: init.initiate_tag,
-                local_initial_tsn: initial_tsn,
-                peer_initial_tsn: init.initial_tsn,
-                incoming_streams: u16::min(self.settings.incoming_streams, init.outbound_streams),
-                outgoing_streams: u16::min(self.settings.outgoing_streams, init.inbound_streams),
-                peer_arwnd: init.a_rwnd,
-                mac: 0,
-            };
-            cookie.mac = cookie.calc_mac(&self.settings.cookie_secret);
-            let cookie = StateCookie::Ours(cookie);
-            let init_ack = Chunk::InitAck(self.create_init_ack(
-                init.unrecognized,
-                cookie,
-                initial_tsn,
-                local_verification_tag,
-            ));
-            self.send_immediate.push_back((
-                from,
-                Packet::new(packet.to(), packet.from(), init.initiate_tag),
-                init_ack,
-            ));
-            // handled the init correctly, no need to process the packet any further
-            true
-        } else {
-            unreachable!("We checked above that this is an init chunk")
+        if size != data.len() {
+            // This is illegal, the init needs to be the only chunk in the packet
+            // -> stop processing this
+            return HandleSpecialResult::Error;
         }
+        let initial_tsn = rand::thread_rng().next_u32();
+        let local_verification_tag = rand::thread_rng().next_u32();
+        let mut cookie = Cookie {
+            init_address: from,
+            aliases: init.aliases,
+            peer_port: packet.from(),
+            local_port: packet.to(),
+            local_verification_tag,
+            peer_verification_tag: init.initiate_tag,
+            local_initial_tsn: initial_tsn,
+            peer_initial_tsn: init.initial_tsn,
+            incoming_streams: u16::min(self.settings.incoming_streams, init.outbound_streams),
+            outgoing_streams: u16::min(self.settings.outgoing_streams, init.inbound_streams),
+            peer_arwnd: init.a_rwnd,
+            mac: 0,
+        };
+        cookie.mac = cookie.calc_mac(&self.settings.cookie_secret);
+        let cookie = StateCookie::Ours(cookie);
+        let init_ack = Chunk::InitAck(self.create_init_ack(
+            init.unrecognized,
+            cookie,
+            initial_tsn,
+            local_verification_tag,
+        ));
+        self.send_immediate.push_back((
+            from,
+            Packet::new(packet.to(), packet.from(), init.initiate_tag),
+            init_ack,
+        ));
+        // handled the init correctly, no need to process the packet any further
+        HandleSpecialResult::Handled(())
     }
 
     fn create_init_ack(
@@ -237,25 +241,23 @@ impl Sctp {
         &mut self,
         packet: &Packet,
         data: &mut Bytes,
-    ) -> Option<AssocId> {
+    ) -> HandleSpecialResult<AssocId> {
         if !Chunk::is_cookie_echo(data) {
-            return None;
+            return HandleSpecialResult::NotRecognized;
         }
-        let (size, Ok(chunk)) = Chunk::parse(data) else {
-            return None;
-        };
-        let Chunk::StateCookie(mut cookie) = chunk else {
-            return None;
+        let (size, Ok(Chunk::StateCookie(mut cookie))) = Chunk::parse(data) else {
+            return HandleSpecialResult::Error;
         };
         let Some(cookie) = cookie.make_ours() else {
-            return None;
+            // TODO this is malicious, maybe do something more drastic?
+            return HandleSpecialResult::Error;
         };
 
         let calced_mac = cookie.calc_mac(&self.settings.cookie_secret);
 
         if calced_mac != cookie.mac {
-            // TODO maybe bail more drastically?
-            return None;
+            // TODO this is malicious, maybe do something more drastic?
+            return HandleSpecialResult::Error;
         }
 
         data.advance(size);
@@ -279,7 +281,7 @@ impl Sctp {
         );
         self.tx_notifications
             .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
-        Some(assoc_id)
+        HandleSpecialResult::Handled(assoc_id)
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -4,7 +4,7 @@ pub use rx::*;
 pub mod tx;
 pub use tx::*;
 
-mod init;
+pub(crate) mod init;
 mod srtt;
 
 use crate::{packet::Tsn, AssocId};

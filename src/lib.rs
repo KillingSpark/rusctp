@@ -11,7 +11,7 @@ pub mod assoc_async {
 
 pub mod assoc;
 pub mod packet;
-use assoc::{Association, RxNotification, TxNotification};
+use assoc::{init::HandleSpecialResult, Association, RxNotification, TxNotification};
 use packet::{Chunk, Packet, ParseError};
 
 use std::{
@@ -111,28 +111,33 @@ impl Sctp {
         data.advance(12);
 
         // If we get an init chunk we only send the init ack and return immediatly
-        if self.handle_init(&packet, &data, from) {
+        if self.handle_init(&packet, &data, from).handled_or_error() {
             return;
         }
 
-        if self.handle_init_ack(&packet, &mut data, from) {
+        if self
+            .handle_init_ack(&packet, &mut data, from)
+            .handled_or_error()
+        {
             return;
         }
 
-        if self.handle_cookie_echo(&packet, &mut data).is_some() {
-            return;
-        }
-
-        if self.handle_cookie_ack(&packet, &mut data, from).is_some() {
-            return;
-        }
-
+        let mut new_assoc_id = None;
         // Either we have accepted a new association here
-        let new_assoc_id = self.handle_cookie_echo(&packet, &mut data);
+        match self.handle_cookie_echo(&packet, &mut data) {
+            HandleSpecialResult::Handled(id) => new_assoc_id = Some(id),
+            HandleSpecialResult::Error => return,
+            HandleSpecialResult::NotRecognized => { /* keep handling, this is allowed to carry data */
+            }
+        }
 
-        // Or we get an ack on an association we initiated
-        let new_assoc_id =
-            new_assoc_id.or_else(|| self.handle_cookie_ack(&packet, &mut data, from));
+        // or here
+        match self.handle_cookie_ack(&packet, &mut data, from) {
+            HandleSpecialResult::Handled(id) => new_assoc_id = Some(id),
+            HandleSpecialResult::Error => return,
+            HandleSpecialResult::NotRecognized => { /* keep handling, this is allowed to carry data */
+            }
+        }
 
         // Or we need to look the ID up via the aliases
         let assoc_id = new_assoc_id.or_else(|| {
