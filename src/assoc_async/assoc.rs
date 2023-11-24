@@ -55,7 +55,7 @@ pub struct AssociationRx {
 
 struct InnerRx {
     rx: crate::assoc::AssociationRx,
-    recv_wakers: Vec<Waker>,
+    recv_wakers: HashMap<u16, Vec<Waker>>,
 }
 
 impl Sctp {
@@ -187,7 +187,7 @@ impl InnerSctp {
                 rx: Arc::new(AssociationRx {
                     wrapped: Mutex::new(InnerRx {
                         rx,
-                        recv_wakers: vec![],
+                        recv_wakers: HashMap::new(),
                     }),
                 }),
             };
@@ -211,9 +211,17 @@ impl InnerSctp {
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let mut tx = assoc.tx.wrapped.lock().unwrap();
                 let mut rx = assoc.rx.wrapped.lock().unwrap();
+                let stream_to_wake = rx_notification.get_stream_id();
                 rx.rx
                     .notification(rx_notification, std::time::Instant::now());
-                rx.recv_wakers.drain(..).for_each(Waker::wake);
+
+                if let Some(wakers) = stream_to_wake.and_then(|stream_id| {
+                    rx.recv_wakers
+                        .get_mut(&stream_id)
+                        .map(|wakers| wakers.drain(..))
+                }) {
+                    wakers.for_each(Waker::wake);
+                }
 
                 for tx_notification in rx.rx.tx_notifications() {
                     tx.tx
@@ -341,7 +349,11 @@ impl AssociationRx {
                 if let Some(data) = wrapped.rx.poll_data(self.stream) {
                     std::task::Poll::Ready(data)
                 } else {
-                    wrapped.recv_wakers.push(cx.waker().to_owned());
+                    wrapped
+                        .recv_wakers
+                        .entry(self.stream)
+                        .or_default()
+                        .push(cx.waker().to_owned());
                     std::task::Poll::Pending
                 }
             }

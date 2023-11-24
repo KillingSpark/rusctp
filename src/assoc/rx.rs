@@ -32,6 +32,16 @@ pub enum RxNotification {
     Chunk(Chunk),
 }
 
+impl RxNotification {
+    pub fn get_stream_id(&self) -> Option<u16> {
+        if let Self::Chunk(Chunk::Data(data)) = self {
+            Some(data.stream_id)
+        } else {
+            None
+        }
+    }
+}
+
 impl AssociationRx {
     pub(crate) fn new(id: AssocId, init_tsn: Tsn, in_streams: u16, in_buffer_limit: usize) -> Self {
         Self {
