@@ -9,8 +9,9 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
+    assoc::Timer,
     packet::{Chunk, Packet},
-    AssocId, Settings, TransportAddress, assoc::Timer,
+    AssocId, Settings, TransportAddress,
 };
 
 pub struct Sctp {
@@ -288,7 +289,6 @@ impl AssociationTx {
     pub fn handle_timeout(&self, timer: Timer) {
         self.wrapped.lock().unwrap().tx.handle_timeout(timer);
     }
-
 
     pub fn poll_chunk_to_send(self: &Arc<AssociationTx>) -> impl Future<Output = (Packet, Chunk)> {
         struct PollFuture {
