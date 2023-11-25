@@ -277,6 +277,7 @@ impl AssociationTx {
                         data,
                         kind: SendErrorKind::BufferFull,
                     }) => {
+                        //eprintln!("Send buffer full");
                         wrapped.send_wakers.push(cx.waker().to_owned());
                         drop(wrapped);
                         self.data = Some(data);
@@ -305,9 +306,13 @@ impl AssociationTx {
         self.wrapped.lock().unwrap().tx.handle_timeout(timer);
     }
 
-    pub fn poll_chunk_to_send(self: &Arc<AssociationTx>) -> impl Future<Output = (Packet, Chunk)> {
+    pub fn poll_chunk_to_send(
+        self: &Arc<AssociationTx>,
+        limit: usize,
+    ) -> impl Future<Output = (Packet, Chunk)> {
         struct PollFuture {
             tx: Arc<AssociationTx>,
+            limit: usize,
         }
 
         impl Future for PollFuture {
@@ -318,10 +323,10 @@ impl AssociationTx {
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.tx.wrapped.lock().unwrap();
-                if let Some(chunk) = wrapped.tx.poll_signal_to_send(1500).or_else(|| {
+                if let Some(chunk) = wrapped.tx.poll_signal_to_send(self.limit).or_else(|| {
                     wrapped
                         .tx
-                        .poll_data_to_send(1500, Instant::now())
+                        .poll_data_to_send(self.limit, Instant::now())
                         .map(Chunk::Data)
                 }) {
                     for waker in wrapped.send_wakers.drain(..) {
@@ -335,7 +340,27 @@ impl AssociationTx {
             }
         }
 
-        PollFuture { tx: self.clone() }
+        PollFuture {
+            tx: self.clone(),
+            limit,
+        }
+    }
+
+    pub fn try_poll_chunk_to_send(
+        self: &Arc<AssociationTx>,
+        limit: usize,
+    ) -> Option<(Packet, Chunk)> {
+        let mut wrapped = self.wrapped.lock().unwrap();
+        wrapped
+            .tx
+            .poll_signal_to_send(limit)
+            .or_else(|| {
+                wrapped
+                    .tx
+                    .poll_data_to_send(limit, Instant::now())
+                    .map(Chunk::Data)
+            })
+            .map(|chunk| (wrapped.tx.packet_header(), chunk))
     }
 }
 
@@ -359,6 +384,7 @@ impl AssociationRx {
                 match wrapped.rx.poll_data(self.stream) {
                     PollDataResult::Data(data) => std::task::Poll::Ready(Ok(data)),
                     PollDataResult::NoneAvailable => {
+                        //eprintln!("Recv buffer empty");
                         wrapped
                             .recv_wakers
                             .entry(self.stream)

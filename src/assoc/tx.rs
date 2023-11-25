@@ -187,7 +187,6 @@ impl AssociationTx {
             self.current_in_flight -= acked.data.buf.len();
             bytes_acked += acked.data.buf.len();
         };
-
         while self
             .resend_queue
             .front()
@@ -297,10 +296,11 @@ impl AssociationTx {
     }
 
     pub fn handle_timeout(&mut self, timeout: Timer) {
-        self.primary_congestion.rto_expired();
-        self.srtt.rto_expired();
         if let Some(current_timer) = self.rto_timer {
             if current_timer.marker == timeout.marker {
+                self.primary_congestion.rto_expired();
+                self.srtt.rto_expired();
+
                 self.resend_queue.iter_mut().for_each(|p| {
                     if p.queued_at + self.srtt.rto_duration() <= timeout.at {
                         p.marked_for_retransmit = true;
@@ -313,8 +313,9 @@ impl AssociationTx {
     }
 
     fn set_timeout(&mut self, now: Instant) {
+        let at = now + self.srtt.rto_duration();
         self.rto_timer = Some(Timer {
-            at: now + self.srtt.rto_duration(),
+            at,
             marker: self.timer_ctr,
         });
         self.timer_ctr = self.timer_ctr.wrapping_add(1);
@@ -338,10 +339,9 @@ impl AssociationTx {
         }
 
         // anything else is subject to the congestion window limits
-        let data_limit = usize::min(
-            data_limit,
-            self.primary_congestion.send_limit(self.current_in_flight),
-        );
+        let data_limit = self
+            .primary_congestion
+            .send_limit(self.current_in_flight, data_limit);
 
         if let Some(front) = self.resend_queue.front_mut() {
             if front.marked_for_retransmit {
