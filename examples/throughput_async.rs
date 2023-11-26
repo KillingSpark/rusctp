@@ -88,27 +88,29 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 rx.recv_data(0).await.unwrap();
             }
         });
+        let mut chunk_buf = BytesMut::with_capacity(PMTU - 100);
+        let mut packet_buf = BytesMut::with_capacity(PMTU);
         loop {
+            chunk_buf.clear();
+            packet_buf.clear();
+            let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
             if let Some(timer) = tx.next_timeout() {
                 let timeout = timer.at() - Instant::now();
 
-                let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
                 tokio::select! {
-                    packet = collect_all_chunks(&tx, &mut chunk_buf) => {
-                        send_to(&socket, packet, chunk_buf.into_inner().freeze()).await.unwrap();
+                    packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
+                        send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
                         tx.handle_timeout(timer);
                     }
                 };
             } else {
-                let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
-                let packet = collect_all_chunks(&tx, &mut chunk_buf).await;
+                let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
 
-                send_to(&socket, packet, chunk_buf.into_inner().freeze())
-                    .await
-                    .unwrap();
+                send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
             }
+            chunk_buf = chunk_buf_limit.into_inner();
         }
     });
     runtime
@@ -192,27 +194,29 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 }
             }
         });
+        let mut chunk_buf = BytesMut::with_capacity(PMTU - 100);
+        let mut packet_buf = BytesMut::with_capacity(PMTU);
         loop {
+            chunk_buf.clear();
+            packet_buf.clear();
+            let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
             if let Some(timer) = tx.next_timeout() {
                 let timeout = timer.at() - Instant::now();
 
-                let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
                 tokio::select! {
-                    packet = collect_all_chunks(&tx, &mut chunk_buf) => {
-                        send_to(&socket, packet, chunk_buf.into_inner().freeze()).await.unwrap();
+                    packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
+                        send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
                         tx.handle_timeout(timer);
                     }
                 };
             } else {
-                let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
-                let packet = collect_all_chunks(&tx, &mut chunk_buf).await;
+                let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
 
-                send_to(&socket, packet, chunk_buf.into_inner().freeze())
-                    .await
-                    .unwrap();
+                send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
             }
+            chunk_buf = chunk_buf_limit.into_inner();
         }
     });
     runtime
@@ -230,10 +234,10 @@ async fn collect_all_chunks(tx: &Arc<AssociationTx>, chunks: &mut impl BufMut) -
 async fn send_to(
     socket: &UdpSocket,
     packet: Packet,
-    chunkbuf: Bytes,
+    chunkbuf: &[u8],
+    buf: &mut BytesMut,
 ) -> Result<(), tokio::io::Error> {
-    let mut buf = BytesMut::new();
-    packet.serialize(&mut buf, chunkbuf.clone());
+    packet.serialize(buf, chunkbuf);
     buf.put_slice(&chunkbuf);
 
     socket.send(&buf).await?;
