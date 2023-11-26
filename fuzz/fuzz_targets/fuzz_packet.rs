@@ -15,7 +15,11 @@ fuzz_target!(|data: &[u8]| {
         for (chunk, mut original) in chunks {
             let mut tmpbuf = BytesMut::new();
             chunk.serialize(&mut tmpbuf);
-            assert_eq!(chunk.padded_serialized_size(), tmpbuf.len(), "Len was not correct for: {chunk:?}");
+            assert_eq!(
+                chunk.padded_serialized_size(),
+                tmpbuf.len(),
+                "Len was not correct for: {chunk:?}"
+            );
 
             if !tmpbuf.is_empty() {
                 let tmp_type = tmpbuf[0];
@@ -31,15 +35,18 @@ fuzz_target!(|data: &[u8]| {
                 let tmp_len = tmpbuf.get_u16();
                 let original_len = original.get_u16();
 
-                if tmp_len == original_len {
-                    let tmpbuf: &[u8] = &tmpbuf[..original_len as usize - 4];
-                    let original: &[u8] = &original[..original_len as usize - 4];
+                // The params in these are annoying because the ordering prevents equals checks
+                if !matches!(chunk, Chunk::Init(_) | Chunk::InitAck(_)) {
+                    if tmp_len == original_len {
+                        let tmpbuf: &[u8] = &tmpbuf[..original_len as usize - 4];
+                        let original: &[u8] = &original[..original_len as usize - 4];
 
-                    assert_eq!(
-                        tmpbuf, original,
-                        "{chunk:?} did not serialize correctly back"
-                    );
-                    buf.put_slice(tmpbuf);
+                        assert_eq!(
+                            tmpbuf, original,
+                            "{chunk:?} did not serialize correctly back"
+                        );
+                        buf.put_slice(tmpbuf);
+                    }
                 }
             }
         }
