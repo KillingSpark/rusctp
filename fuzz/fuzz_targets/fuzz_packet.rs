@@ -12,19 +12,32 @@ use bytes::BytesMut;
 fuzz_target!(|data: &[u8]| {
     if let Some((packet, chunks)) = decode(data) {
         let mut buf = BytesMut::new();
-        for (chunk, original) in chunks {
+        for (chunk, mut original) in chunks {
             let mut tmpbuf = BytesMut::new();
             chunk.serialize(&mut tmpbuf);
 
             if !tmpbuf.is_empty() {
                 let tmp_type = tmpbuf[0];
-                let tmpbuf: &[u8] = &tmpbuf[2..];
+                tmpbuf.advance(2);
                 let original_type = original[0];
-                let original: &[u8] = &original[2..];
+                original.advance(2);
+
                 assert_eq!(
                     tmp_type, original_type,
                     "{chunk:?} did not serialize its type correctly back"
                 );
+
+                let tmp_len = tmpbuf.get_u16();
+                let original_len = original.get_u16();
+
+                assert_eq!(
+                    tmp_len, original_len,
+                    "{chunk:?} did not serialize its length correctly back"
+                );
+
+                let tmpbuf: &[u8] = &tmpbuf[..original_len as usize - 4];
+                let original: &[u8] = &original[..original_len as usize - 4];
+
                 assert_eq!(
                     tmpbuf, original,
                     "{chunk:?} did not serialize correctly back"

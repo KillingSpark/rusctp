@@ -354,7 +354,12 @@ impl Chunk {
             CHUNK_SHUTDOWN_ACK => Chunk::ShutDownAck,
             CHUNK_OP_ERROR => Chunk::OpError,
             CHUNK_STATE_COOKIE => Chunk::StateCookie(StateCookie::Opaque(value)),
-            CHUNK_STATE_COOKIE_ACK => Chunk::StateCookieAck,
+            CHUNK_STATE_COOKIE_ACK => {
+                if !value.is_empty() {
+                    return (padded_len, Err(ParseError::IllegalFormat));
+                }
+                Chunk::StateCookieAck
+            }
             CHUNK_RESERVED_ECNE => Chunk::_ReservedECNE,
             CHUNK_RESERVED_CWR => Chunk::_ReservedCWR,
             CHUNK_SHUTDOWN_COMPLETE => Chunk::ShutDownComplete,
