@@ -22,7 +22,7 @@ impl SelectiveAck {
         let mut blocks = vec![];
         let mut duplicated_tsn = vec![];
 
-        if data.len() < 4 * (n_blocks + n_dups) as usize {
+        if data.len() < 4 * (n_blocks as usize + n_dups as usize) {
             return None;
         }
         for _ in 0..n_blocks {

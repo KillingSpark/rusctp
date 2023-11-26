@@ -9,6 +9,7 @@ edition = "2021"
 default = ["sync", "async"]
 sync = []
 async = []
+fuzz = []
 
 [dependencies]
 crc = {version="3.1.0-beta", features=["slice16-mem-limit"]}

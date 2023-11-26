@@ -34,18 +34,26 @@ impl Packet {
     }
 
     pub fn parse(data: &[u8]) -> Option<Self> {
+        if data.len() < 12 {
+            return None;
+        }
         let from = u16::from_be_bytes(data[0..2].try_into().ok()?);
         let to = u16::from_be_bytes(data[2..4].try_into().ok()?);
         let verification_tag = u32::from_be_bytes(data[4..8].try_into().ok()?);
         let checksum = u32::from_be_bytes(data[8..12].try_into().ok()?);
 
-        let mut digest = CRC.digest();
-        digest.update(&data[..8]);
-        digest.update(&[0, 0, 0, 0]);
-        digest.update(&data[12..]);
-        if !digest.finalize().eq(&checksum) {
-            return None;
+        #[cfg(not(feature = "fuzz"))]
+        {
+            let mut digest = CRC.digest();
+            digest.update(&data[..8]);
+            digest.update(&[0, 0, 0, 0]);
+            digest.update(&data[12..]);
+            if !digest.finalize().eq(&checksum) {
+                return None;
+            }
         }
+        #[cfg(feature = "fuzz")]
+        let _ = checksum;
 
         Some(Self {
             from,
@@ -305,6 +313,9 @@ impl Chunk {
         let len = len as usize;
 
         if len > data.len() {
+            return (data.len(), Err(ParseError::IllegalFormat));
+        }
+        if len < CHUNK_HEADER_SIZE {
             return (data.len(), Err(ParseError::IllegalFormat));
         }
 

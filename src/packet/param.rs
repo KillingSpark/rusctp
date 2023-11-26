@@ -53,6 +53,9 @@ impl Param {
         if len > data.len() {
             return (data.len(), Err(ParseError::IllegalFormat));
         }
+        if len < PARAM_HEADER_SIZE {
+            return (data.len(), Err(ParseError::IllegalFormat));
+        }
 
         let mut value = data.slice(PARAM_HEADER_SIZE..len);
         let actual_len = usize::min(padded_len(len), data.len());
