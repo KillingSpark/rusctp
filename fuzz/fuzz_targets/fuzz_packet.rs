@@ -5,23 +5,56 @@ use rusctp::packet::Chunk;
 use rusctp::packet::Packet;
 
 use bytes::Buf;
+use bytes::BufMut;
+use bytes::Bytes;
+use bytes::BytesMut;
 
 fuzz_target!(|data: &[u8]| {
-    decode(data);
+    if let Some((packet, chunks)) = decode(data) {
+        let mut buf = BytesMut::new();
+        for (chunk, original) in chunks {
+            let mut tmpbuf = BytesMut::new();
+            chunk.serialize(&mut tmpbuf);
+
+            if !tmpbuf.is_empty() {
+                let tmp_type = tmpbuf[0];
+                let tmpbuf: &[u8] = &tmpbuf[2..];
+                let original_type = original[0];
+                let original: &[u8] = &original[2..];
+                assert_eq!(
+                    tmp_type, original_type,
+                    "{chunk:?} did not serialize its type correctly back"
+                );
+                assert_eq!(
+                    tmpbuf, original,
+                    "{chunk:?} did not serialize correctly back"
+                );
+                buf.put_slice(tmpbuf);
+            }
+        }
+        let buf = buf.freeze();
+        let mut packet_buf = BytesMut::new();
+        packet.serialize(&mut packet_buf, buf.clone());
+
+        packet_buf.put_slice(&buf);
+        let packet_buf: &[u8] = &packet_buf;
+        assert_eq!(data[..8], packet_buf[..8], "{packet:?}");
+    }
 });
 
-fn decode(data: &[u8]) -> Option<(Packet, Vec<Chunk>)> {
+fn decode(data: &[u8]) -> Option<(Packet, Vec<(Chunk, Bytes)>)> {
     let packet = Packet::parse(data)?;
 
-    let mut data = bytes::Bytes::copy_from_slice(&data[4..]);
+    let mut data = Bytes::copy_from_slice(&data[4..]);
 
     let mut chunks = vec![];
     while !data.is_empty() {
         let (size, res) = Chunk::parse(&data);
-        data.advance(size);
         if let Ok(chunk) = res {
-            chunks.push(chunk);
+            let data = data.slice(..size);
+            chunks.push((chunk, data));
         }
+        data.advance(size);
     }
 
     Some((packet, chunks))

@@ -383,7 +383,7 @@ impl Chunk {
                 buf.put_u8(CHUNK_HEARTBEAT);
                 buf.put_u8(0);
                 let size = data.len() + CHUNK_HEADER_SIZE;
-                buf.put_u16((CHUNK_HEADER_SIZE + size) as u16);
+                buf.put_u16(size as u16);
                 buf.put_slice(data);
                 // maybe padding is needed
                 buf.put_bytes(0, padding_needed(size));
@@ -392,12 +392,15 @@ impl Chunk {
                 buf.put_u8(CHUNK_HEARTBEAT_ACK);
                 buf.put_u8(0);
                 let size = data.len() + CHUNK_HEADER_SIZE;
-                buf.put_u16((CHUNK_HEADER_SIZE + size) as u16);
+                buf.put_u16(size as u16);
                 buf.put_slice(data);
                 // maybe padding is needed
                 buf.put_bytes(0, padding_needed(size));
             }
-            _ => unimplemented!(),
+            _ => {
+                #[cfg(not(feature = "fuzz"))]
+                unimplemented!();
+            }
         }
     }
 
@@ -411,7 +414,12 @@ impl Chunk {
             Chunk::SAck(sack) => sack.serialized_size(),
             Chunk::HeartBeat(data) => CHUNK_HEADER_SIZE + data.len(),
             Chunk::HeartBeatAck(data) => CHUNK_HEADER_SIZE + data.len(),
-            _ => unimplemented!(),
+            _ => {
+                #[cfg(not(feature = "fuzz"))]
+                unimplemented!();
+                #[cfg(feature = "fuzz")]
+                0
+            }
         }
     }
 
