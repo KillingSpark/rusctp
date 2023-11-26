@@ -231,6 +231,8 @@ pub struct UnrecognizedParam {
 impl UnrecognizedParam {
     pub fn serialize_as_param(&self, buf: &mut impl BufMut) {
         buf.put_u16(PARAM_UNRECOGNIZED);
+        buf.put_u16((PARAM_HEADER_SIZE + PARAM_HEADER_SIZE + self.data.len()) as u16);
+        buf.put_u16(self.typ);
         buf.put_u16((PARAM_HEADER_SIZE + self.data.len()) as u16);
         buf.put_slice(&self.data);
         // maybe padding is needed
@@ -426,6 +428,9 @@ impl Chunk {
                 0
             }
         }
+    }
+    pub fn padded_serialized_size(&self) -> usize {
+        padded_len(self.serialized_size())
     }
 
     pub fn cookie_ack_bytes() -> Bytes {

@@ -286,7 +286,7 @@ impl InitAck {
         }
 
         for unrecognized in &self.unrecognized {
-            size += padded_len(PARAM_HEADER_SIZE + unrecognized.data.len());
+            size += padded_len(PARAM_HEADER_SIZE + PARAM_HEADER_SIZE + unrecognized.data.len());
         }
 
         size

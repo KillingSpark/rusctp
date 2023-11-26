@@ -15,6 +15,7 @@ fuzz_target!(|data: &[u8]| {
         for (chunk, mut original) in chunks {
             let mut tmpbuf = BytesMut::new();
             chunk.serialize(&mut tmpbuf);
+            assert_eq!(chunk.padded_serialized_size(), tmpbuf.len(), "Len was not correct for: {chunk:?}");
 
             if !tmpbuf.is_empty() {
                 let tmp_type = tmpbuf[0];
