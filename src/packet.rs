@@ -95,8 +95,8 @@ pub enum Chunk {
     Init(init::InitChunk),
     InitAck(init::InitAck),
     SAck(sack::SelectiveAck),
-    HeartBeat,
-    HeartBeatAck,
+    HeartBeat(Bytes),
+    HeartBeatAck(Bytes),
     Abort,
     ShutDown,
     ShutDownAck,
@@ -336,8 +336,8 @@ impl Chunk {
                 };
                 Chunk::SAck(sack)
             }
-            CHUNK_HEARTBEAT => Chunk::HeartBeat,
-            CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck,
+            CHUNK_HEARTBEAT => Chunk::HeartBeat(value),
+            CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck(value),
             CHUNK_ABORT => Chunk::Abort,
             CHUNK_SHUTDOWN => Chunk::ShutDown,
             CHUNK_SHUTDOWN_ACK => Chunk::ShutDownAck,
@@ -368,6 +368,24 @@ impl Chunk {
                 buf.put_bytes(0, padding_needed(size));
             }
             Chunk::SAck(sack) => sack.serialize(buf),
+            Chunk::HeartBeat(data) => {
+                buf.put_u8(CHUNK_HEARTBEAT);
+                buf.put_u8(0);
+                let size = data.len() + CHUNK_HEADER_SIZE;
+                buf.put_u16((CHUNK_HEADER_SIZE + size) as u16);
+                buf.put_slice(data);
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
+            }
+            Chunk::HeartBeatAck(data) => {
+                buf.put_u8(CHUNK_HEARTBEAT_ACK);
+                buf.put_u8(0);
+                let size = data.len() + CHUNK_HEADER_SIZE;
+                buf.put_u16((CHUNK_HEADER_SIZE + size) as u16);
+                buf.put_slice(data);
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
+            }
             _ => unimplemented!(),
         }
     }
@@ -380,6 +398,8 @@ impl Chunk {
             Chunk::InitAck(ack) => ack.serialized_size(),
             Chunk::StateCookie(cookie) => CHUNK_HEADER_SIZE + cookie.serialized_size(),
             Chunk::SAck(sack) => sack.serialized_size(),
+            Chunk::HeartBeat(data) => CHUNK_HEADER_SIZE + data.len(),
+            Chunk::HeartBeatAck(data) => CHUNK_HEADER_SIZE + data.len(),
             _ => unimplemented!(),
         }
     }
