@@ -18,3 +18,4 @@ This is mostly a for-fun implementation of sctp. I am trying my hand at implemen
 * (Not tested) build a connection with another implementation
 * Shut down cleanly
 * Reconfiguration (https://datatracker.ietf.org/doc/html/rfc6525)
+* PMTU detection/discovery: https://datatracker.ietf.org/doc/rfc8899/
