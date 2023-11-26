@@ -51,6 +51,7 @@ struct InnerTx {
 
 pub struct AssociationRx {
     wrapped: Mutex<InnerRx>,
+    tx: Arc<AssociationTx>,
 }
 
 struct InnerRx {
@@ -176,20 +177,22 @@ impl InnerSctp {
         if let Some(assoc) = self.sctp.new_assoc() {
             let id = assoc.id();
             let (rx, tx) = assoc.split();
-            let assoc = Association {
-                tx: Arc::new(AssociationTx {
-                    wrapped: Mutex::new(InnerTx {
-                        tx,
-                        send_wakers: vec![],
-                        poll_wakers: vec![],
-                    }),
+            let tx = Arc::new(AssociationTx {
+                wrapped: Mutex::new(InnerTx {
+                    tx,
+                    send_wakers: vec![],
+                    poll_wakers: vec![],
                 }),
+            });
+            let assoc = Association {
                 rx: Arc::new(AssociationRx {
                     wrapped: Mutex::new(InnerRx {
                         rx,
                         recv_wakers: HashMap::new(),
                     }),
+                    tx: tx.clone(),
                 }),
+                tx,
             };
             self.assocs.insert(id, assoc.clone());
             self.ready_assocs.push_back(assoc);
@@ -209,7 +212,6 @@ impl InnerSctp {
 
         for (id, rx_notification) in self.sctp.rx_notifications() {
             if let Some(assoc) = self.assocs.get_mut(&id) {
-                let mut tx = assoc.tx.wrapped.lock().unwrap();
                 let mut rx = assoc.rx.wrapped.lock().unwrap();
                 let stream_to_wake = rx_notification.get_stream_id();
                 rx.rx
@@ -223,6 +225,7 @@ impl InnerSctp {
                     wakers.for_each(Waker::wake);
                 }
 
+                let mut tx = assoc.tx.wrapped.lock().unwrap();
                 for tx_notification in rx.rx.tx_notifications() {
                     tx.tx
                         .notification(tx_notification, std::time::Instant::now());
@@ -329,8 +332,10 @@ impl AssociationTx {
                         .poll_data_to_send(self.limit, Instant::now())
                         .map(Chunk::Data)
                 }) {
-                    for waker in wrapped.send_wakers.drain(..) {
-                        waker.wake();
+                    if let Chunk::Data(_) = chunk {
+                        for waker in wrapped.send_wakers.drain(..) {
+                            waker.wake();
+                        }
                     }
                     std::task::Poll::Ready((wrapped.tx.packet_header(), chunk))
                 } else {
@@ -382,9 +387,17 @@ impl AssociationRx {
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.rx.wrapped.lock().unwrap();
                 match wrapped.rx.poll_data(self.stream) {
-                    PollDataResult::Data(data) => std::task::Poll::Ready(Ok(data)),
+                    PollDataResult::Data(data) => {
+                        let mut tx = self.rx.tx.wrapped.lock().unwrap();
+                        for tx_notification in wrapped.rx.tx_notifications() {
+                            tx.tx
+                                .notification(tx_notification, std::time::Instant::now());
+                            tx.poll_wakers.drain(..).for_each(Waker::wake);
+                        }
+
+                        std::task::Poll::Ready(Ok(data))
+                    }
                     PollDataResult::NoneAvailable => {
-                        //eprintln!("Recv buffer empty");
                         wrapped
                             .recv_wakers
                             .entry(self.stream)

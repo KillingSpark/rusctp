@@ -15,6 +15,7 @@ pub struct AssociationRx {
     tx_notifications: VecDeque<TxNotification>,
 
     tsn_counter: Tsn,
+    last_sent_arwnd: u32,
 
     per_stream: Vec<PerStreamInfo>,
     tsn_reorder_buffer: BTreeMap<Tsn, DataChunk>,
@@ -64,6 +65,7 @@ impl AssociationRx {
             tx_notifications: VecDeque::new(),
 
             tsn_counter: init_tsn.decrease(),
+            last_sent_arwnd: in_buffer_limit as u32,
 
             per_stream: (0..in_streams)
                 .map(|_| PerStreamInfo {
@@ -134,10 +136,12 @@ impl AssociationRx {
                         self.current_in_buffer += data.buf.len();
                         stream_info.queue.insert(data.stream_seq_num, data);
 
+                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+                        self.last_sent_arwnd = a_rwnd;
                         self.tx_notifications
                             .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
                                 cum_tsn: self.tsn_counter,
-                                a_rwnd: (self.in_buffer_limit - self.current_in_buffer) as u32,
+                                a_rwnd,
                                 blocks: vec![],
                                 duplicated_tsn: vec![],
                             })))
@@ -171,6 +175,20 @@ impl AssociationRx {
                         stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
                         let (_, data) = stream_info.queue.pop_first().unwrap();
                         self.current_in_buffer -= data.buf.len();
+
+                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+
+                        if a_rwnd >= self.last_sent_arwnd * 2 {
+                            self.last_sent_arwnd = a_rwnd;
+                            self.tx_notifications
+                                .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                                    cum_tsn: self.tsn_counter,
+                                    a_rwnd,
+                                    blocks: vec![],
+                                    duplicated_tsn: vec![],
+                                })));
+                        }
+
                         return PollDataResult::Data(data.buf);
                     }
                 }

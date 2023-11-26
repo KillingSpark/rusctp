@@ -180,6 +180,17 @@ impl AssociationTx {
             // This is a reordered sack, we can safely ignore this
             return;
         }
+        if sack.cum_tsn == self.last_acked_tsn {
+            self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
+            self.duplicated_acks += 1;
+            if self.duplicated_acks >= 2 {
+                self.primary_congestion.enter_fast_recovery();
+            }
+            return;
+        }
+
+        self.last_acked_tsn = sack.cum_tsn;
+        self.duplicated_acks = 0;
 
         let mut bytes_acked = 0;
         let mut packet_acked = |acked: &ResendEntry| {
@@ -218,15 +229,6 @@ impl AssociationTx {
             } else {
                 self.rto_timer = None;
             }
-        }
-        if sack.cum_tsn == self.last_acked_tsn {
-            self.duplicated_acks += 1;
-            if self.duplicated_acks >= 2 {
-                self.primary_congestion.enter_fast_recovery();
-            }
-        } else {
-            self.last_acked_tsn = sack.cum_tsn;
-            self.duplicated_acks = 0;
         }
     }
 

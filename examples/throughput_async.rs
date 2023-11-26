@@ -165,7 +165,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         let (tx, rx) = assoc.split();
         //let echo_tx = tx.clone();
         //tokio::spawn(async move {
-        //    let data = Bytes::copy_from_slice(&[0u8; 1400]);
+        //    let data = Bytes::copy_from_slice(&[0u8; PMTU - 200]);
         //    loop {
         //        echo_tx
         //            .send_data(data.clone(), 0, 0, false, false)
