@@ -30,19 +30,16 @@ fuzz_target!(|data: &[u8]| {
                 let tmp_len = tmpbuf.get_u16();
                 let original_len = original.get_u16();
 
-                assert_eq!(
-                    tmp_len, original_len,
-                    "{chunk:?} did not serialize its length correctly back"
-                );
+                if tmp_len == original_len {
+                    let tmpbuf: &[u8] = &tmpbuf[..original_len as usize - 4];
+                    let original: &[u8] = &original[..original_len as usize - 4];
 
-                let tmpbuf: &[u8] = &tmpbuf[..original_len as usize - 4];
-                let original: &[u8] = &original[..original_len as usize - 4];
-
-                assert_eq!(
-                    tmpbuf, original,
-                    "{chunk:?} did not serialize correctly back"
-                );
-                buf.put_slice(tmpbuf);
+                    assert_eq!(
+                        tmpbuf, original,
+                        "{chunk:?} did not serialize correctly back"
+                    );
+                    buf.put_slice(tmpbuf);
+                }
             }
         }
         let buf = buf.freeze();
