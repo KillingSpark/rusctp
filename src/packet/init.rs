@@ -223,7 +223,7 @@ impl InitAck {
                     break;
                 }
                 Err(ParseError::IllegalFormat) => {
-                    break;
+                    return None;
                 }
                 Err(ParseError::Unrecognized {
                     report,
