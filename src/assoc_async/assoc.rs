@@ -306,7 +306,9 @@ impl AssociationTx {
     }
 
     pub fn handle_timeout(&self, timer: Timer) {
-        self.wrapped.lock().unwrap().tx.handle_timeout(timer);
+        let mut wrapped = self.wrapped.lock().unwrap();
+        wrapped.tx.handle_timeout(timer);
+        wrapped.poll_wakers.drain(..).for_each(Waker::wake);
     }
 
     pub fn poll_chunk_to_send(

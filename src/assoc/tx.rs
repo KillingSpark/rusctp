@@ -195,7 +195,9 @@ impl AssociationTx {
         let mut bytes_acked = 0;
         let mut packet_acked = |acked: &ResendEntry| {
             self.current_out_buffered -= acked.data.buf.len();
-            self.current_in_flight -= acked.data.buf.len();
+            if !acked.marked_for_retransmit {
+                self.current_in_flight -= acked.data.buf.len();
+            }
             bytes_acked += acked.data.buf.len();
         };
         while self
@@ -306,6 +308,8 @@ impl AssociationTx {
                 self.resend_queue.iter_mut().for_each(|p| {
                     if p.queued_at + self.srtt.rto_duration() <= timeout.at {
                         p.marked_for_retransmit = true;
+                        self.current_in_flight -= p.data.buf.len();
+                        p.queued_at = timeout.at;
                     }
                 });
             }
@@ -345,7 +349,7 @@ impl AssociationTx {
             .primary_congestion
             .send_limit(self.current_in_flight, data_limit);
 
-        if let Some(front) = self.resend_queue.front_mut() {
+        for front in self.resend_queue.iter_mut() {
             if front.marked_for_retransmit {
                 if front.data.buf.len() <= data_limit {
                     let rtx = front.data.clone();
@@ -353,6 +357,7 @@ impl AssociationTx {
                     if self.rto_timer.is_none() {
                         self.set_timeout(now);
                     }
+                    self.current_in_flight += rtx.buf.len();
                     return Some(rtx);
                 } else {
                     return None;

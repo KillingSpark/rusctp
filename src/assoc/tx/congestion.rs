@@ -10,7 +10,7 @@ enum CongestionState {
 pub struct PerDestinationInfo {
     state: CongestionState,
     pub pmcds: usize,
-    cwnd: usize,
+    pub cwnd: usize,
     ssthresh: usize,
     _partial_bytes_acked: usize,
     bytes_acked_counter: usize,
@@ -58,7 +58,10 @@ impl PerDestinationInfo {
 
     pub fn enter_fast_recovery(&mut self) {
         self.ssthresh = self.cwnd / 2;
-        self.cwnd = self.ssthresh;
+        self.cwnd = usize::max(
+            self.ssthresh,
+            usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404)),
+        );
         self.change_state(CongestionState::FastRecovery);
     }
 

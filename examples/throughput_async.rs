@@ -39,8 +39,8 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             cookie_secret: b"oh boy a secret string".to_vec(),
             incoming_streams: 10,
             outgoing_streams: 10,
-            in_buffer_limit: 100 * 1024,
-            out_buffer_limit: 100 * 1024,
+            in_buffer_limit: 1000 * PMTU,
+            out_buffer_limit: 1000 * PMTU,
             pmtu: PMTU,
         }));
 
@@ -130,8 +130,8 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             cookie_secret: b"oh boy a secret string".to_vec(),
             incoming_streams: 10,
             outgoing_streams: 10,
-            in_buffer_limit: 100 * 1024,
-            out_buffer_limit: 100 * 1024,
+            in_buffer_limit: 100 * PMTU,
+            out_buffer_limit: 100 * PMTU,
             pmtu: PMTU,
         }));
 
@@ -183,7 +183,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
                 ctr += 1;
-                if ctr % 10_000 == 0 {
+                if ctr % 10_00 == 0 {
                     eprintln!(
                         "{ctr} {}",
                         (1_000_000 * bytes_ctr)

@@ -124,6 +124,7 @@ impl AssociationRx {
             match data.tsn.cmp(&self.tsn_counter.increase()) {
                 Ordering::Greater => {
                     // TSN reordering
+                    // TODO make sure we always have space for packets
                     self.current_in_buffer += data.buf.len();
                     self.tsn_reorder_buffer.insert(data.tsn, data);
                 }
@@ -144,7 +145,7 @@ impl AssociationRx {
                                 a_rwnd,
                                 blocks: vec![],
                                 duplicated_tsn: vec![],
-                            })))
+                            })));
                     }
                 }
                 Ordering::Less => {
@@ -160,6 +161,7 @@ impl AssociationRx {
                 .unwrap_or(false)
             {
                 let data = self.tsn_reorder_buffer.pop_first().unwrap().1;
+                self.current_in_buffer -= data.buf.len();
                 self.handle_data_chunk(data);
             }
         }

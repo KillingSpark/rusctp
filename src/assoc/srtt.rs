@@ -53,7 +53,8 @@ impl Srtt {
             self.srtt = (self.srtt * (ALPHA - 1)) / ALPHA + measurement / ALPHA;
         }
         self.rto = Duration::from_nanos((self.srtt.as_nanos() as i64 + self.rttvar * 4) as u64)
-            .max(Duration::from_millis(1));
+            .max(Duration::from_millis(1))
+            .min(Duration::from_millis(200));
     }
 
     pub fn rto_duration(&self) -> Duration {
@@ -65,6 +66,6 @@ impl Srtt {
     }
 
     pub fn rto_expired(&mut self) {
-        self.rto *= 2;
+        self.rto = Duration::min(self.rto * 2, Duration::from_millis(200));
     }
 }
