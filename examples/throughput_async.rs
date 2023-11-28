@@ -24,7 +24,8 @@ fn main() {
     }
 }
 
-const PMTU: usize = 40_000;
+const PMTU: usize = 10_000;
+const PRINT_EVERY_X_BTES: u64 = 100_000_000;
 
 fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -176,14 +177,12 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         //    }
         //});
         tokio::spawn(async move {
-            let mut ctr = 1;
             let mut bytes_ctr = 0u64;
             let mut start = std::time::Instant::now();
             loop {
                 let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
-                ctr += 1;
-                if ctr % 1_00 == 0 {
+                if bytes_ctr >= PRINT_EVERY_X_BTES {
                     let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
                     format_throughput(bytes_per_sec as usize);
                     start = std::time::Instant::now();
@@ -257,22 +256,12 @@ async fn send_chunk(
     Ok(())
 }
 
-
 fn format_throughput(bytes_per_sec: usize) {
     if bytes_per_sec > 1_000_000_000 {
-        eprintln!(
-            "{:3} Gb/s",
-            bytes_per_sec / 1_000_000_000
-        );
+        eprintln!("{:3} Gb/s", bytes_per_sec / 1_000_000_000);
     } else if bytes_per_sec > 1_000_000 {
-        eprintln!(
-            "{:3} Mb/s",
-            bytes_per_sec / 1_000_000
-        );
+        eprintln!("{:3} Mb/s", bytes_per_sec / 1_000_000);
     } else {
-        eprintln!(
-            "{:3} b/s",
-            bytes_per_sec
-        );
+        eprintln!("{:3} b/s", bytes_per_sec);
     }
 }

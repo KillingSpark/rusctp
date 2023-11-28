@@ -1,11 +1,10 @@
 use std::{collections::VecDeque, time::Instant};
 
-use bytes::{Buf, Bytes};
-
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
 use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk, Packet, TransportAddress};
+use bytes::{Buf, Bytes};
 
 use super::srtt::Srtt;
 
@@ -185,6 +184,18 @@ impl AssociationTx {
             self.duplicated_acks += 1;
             if self.duplicated_acks >= 2 {
                 self.primary_congestion.enter_fast_recovery();
+                for block in sack.blocks {
+                    let start = sack.cum_tsn.0 + block.0 as u32;
+                    let end = sack.cum_tsn.0 + block.1 as u32;
+
+                    let range = start..end + 1;
+                    self.resend_queue.iter_mut().for_each(|packet| {
+                        if !range.contains(&packet.data.tsn.0) {
+                            // TODO we may only mark as many packets as fit in a PMTU and only once when we enter fast recovery
+                            packet.marked_for_fast_retransmit = true;
+                        }
+                    });
+                }
             }
             return;
         }
@@ -207,18 +218,7 @@ impl AssociationTx {
             let acked = self.resend_queue.pop_front().unwrap();
             packet_acked(&acked);
         }
-        for block in sack.blocks {
-            let start = sack.cum_tsn.0 + block.0 as u32;
-            let end = sack.cum_tsn.0 + block.1 as u32;
 
-            let range = start..end + 1;
-            self.resend_queue.iter_mut().for_each(|packet| {
-                if !range.contains(&packet.data.tsn.0) {
-                    // TODO we may only mark as many packets as fit in a PMTU and only once when we enter fast recovery
-                    packet.marked_for_fast_retransmit = true;
-                }
-            });
-        }
         self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
         self.primary_congestion
             .bytes_acked(bytes_acked, sack.cum_tsn);
@@ -253,7 +253,8 @@ impl AssociationTx {
             });
         };
         if self.current_out_buffered + data.len() > self.out_buffer_limit {
-            assert_eq!(self.resend_queue.iter().map(|p| p.data.buf.len()).sum::<usize>(), self.current_in_flight);
+            self.assert_invariants();
+            //self.print_state();
             return Err(SendError {
                 kind: SendErrorKind::BufferFull,
                 data,
@@ -331,8 +332,51 @@ impl AssociationTx {
         self.timer_ctr = self.timer_ctr.wrapping_add(1);
     }
 
+    fn assert_invariants(&self) {
+        assert_eq!(
+            self.current_out_buffered,
+            self.out_queue
+                .iter()
+                .map(|x| x.buf.len())
+                .chain(self.resend_queue.iter().map(|x| x.data.buf.len()))
+                .sum::<usize>()
+        );
+        assert_eq!(
+            self.current_in_flight,
+            self.resend_queue
+                .iter()
+                .map(|x| x.data.buf.len())
+                .sum::<usize>()
+        );
+    }
+
+    #[allow(dead_code)]
+    fn print_state(&self) {
+        if self.out_queue.is_empty() {
+            eprintln!(
+                "No send: resend_queue: {:2}, in_flight: {:6}, out_queue: {:4}, out_buffered: {:8}, peer_rcv_wnd: {:8}, free_rcv_wnd: {:8}, cwnd: {:8} cng_state: {:?}",
+                self.resend_queue.len(),
+                self.current_in_flight,
+                self.out_queue.len(),
+                self.current_out_buffered,
+                self.peer_rcv_window,
+                self.peer_rcv_window - self.current_in_flight as u32,
+                self.primary_congestion.cwnd,
+                self.primary_congestion.state
+            );
+        }
+    }
+
     // Collect next chunk if it would still fit inside the limit
     pub fn poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> Option<DataChunk> {
+        let x = self._poll_data_to_send(data_limit, now);
+        if x.is_none() {
+            self.assert_invariants();
+            //self.print_state();
+        }
+        x
+    }
+    fn _poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> Option<DataChunk> {
         // The data chunk header always takes 16 bytes
         let data_limit = data_limit - 16;
 
@@ -346,7 +390,7 @@ impl AssociationTx {
                             if self.rto_timer.is_none() {
                                 self.set_timeout(now);
                             }
-                            //eprintln!("Ye RTX: {:?}", rtx.tsn);
+                            //eprintln!("Slow RTX: {:?}", rtx.tsn);
                             return Some(rtx);
                         }
                     }
@@ -358,11 +402,13 @@ impl AssociationTx {
                 None
             }
             congestion::CongestionState::FastRecovery => {
-                if let Some(front) = self.resend_queue.front_mut() {
-                    if front.marked_for_fast_retransmit && !front.marked_was_fast_retransmit {
-                        if front.data.buf.len() <= data_limit {
-                            front.marked_was_fast_retransmit = true;
-                            return Some(front.data.clone());
+                for packet in self.resend_queue.iter_mut() {
+                    if packet.marked_for_fast_retransmit && !packet.marked_was_fast_retransmit {
+                        if packet.data.buf.len() <= data_limit {
+                            packet.marked_was_fast_retransmit = true;
+                            packet.marked_for_fast_retransmit = false;
+                            //eprintln!("Fast RTX {:?}", packet.data.tsn);
+                            return Some(packet.data.clone());
                         }
                     }
                 }

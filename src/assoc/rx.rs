@@ -119,64 +119,93 @@ impl AssociationRx {
         None
     }
 
-    pub fn handle_data_chunk(&mut self, data: DataChunk) {
-        if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize) {
-            match data.tsn.cmp(&self.tsn_counter.increase()) {
-                Ordering::Greater => {
-                    // TSN reordering
-                    // TODO make sure we always have space for packets
-                    if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
-                        self.current_in_buffer += data.buf.len();
-                        self.tsn_reorder_buffer.insert(data.tsn, data);
+    fn queue_ack(&mut self) {
+        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+        self.last_sent_arwnd = a_rwnd;
 
-                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
-                        self.last_sent_arwnd = a_rwnd;
-
-                        // TODO send tsn gap blocks
-                        self.tx_notifications
-                            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                cum_tsn: self.tsn_counter,
-                                a_rwnd,
-                                blocks: vec![],
-                                duplicated_tsn: vec![],
-                            })));
-                    }
-                }
-                Ordering::Equal => {
-                    self.tsn_counter = self.tsn_counter.increase();
-
-                    if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
-                        // TODO do we ack something even though the stream id was invalid?
-
-                        self.current_in_buffer += data.buf.len();
-                        stream_info.queue.insert(data.stream_seq_num, data);
-
-                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
-                        self.last_sent_arwnd = a_rwnd;
-                        self.tx_notifications
-                            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                cum_tsn: self.tsn_counter,
-                                a_rwnd,
-                                blocks: vec![],
-                                duplicated_tsn: vec![],
-                            })));
-                    }
-                }
-                Ordering::Less => {
-                    // TODO just drop?
+        let mut blocks = vec![];
+        if let Some((key, _tsn)) = self.tsn_reorder_buffer.first_key_value() {
+            let mut block_start = key.0;
+            let mut block_end = key.0 - 1;
+            for reordered in self.tsn_reorder_buffer.iter() {
+                if reordered.0 .0 == block_end + 1 {
+                    block_end += 1;
+                } else {
+                    blocks.push((
+                        (block_start - self.tsn_counter.0) as u16,
+                        (block_end - self.tsn_counter.0) as u16,
+                    ));
+                    block_start = reordered.0 .0;
+                    block_end = reordered.0 .0;
                 }
             }
+            blocks.push((
+                (block_start - self.tsn_counter.0) as u16,
+                (block_end - self.tsn_counter.0) as u16,
+            ));
+            //eprintln!("CumTsn {:?} Gap blocks: {:?}", self.tsn_counter, blocks);
+        }
 
-            // Check if any reordered packets can now be received
-            while self
-                .tsn_reorder_buffer
-                .first_key_value()
-                .map(|(tsn, _)| *tsn == self.tsn_counter.increase())
-                .unwrap_or(false)
-            {
-                let data = self.tsn_reorder_buffer.pop_first().unwrap().1;
-                self.current_in_buffer -= data.buf.len();
-                self.handle_data_chunk(data);
+        // TODO send tsn gap blocks
+        self.tx_notifications
+            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                cum_tsn: self.tsn_counter,
+                a_rwnd,
+                blocks,
+                duplicated_tsn: vec![],
+            })));
+    }
+
+    fn handle_in_order_packet(&mut self, data: DataChunk) -> bool {
+        if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize) {
+            if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
+                self.tsn_counter = self.tsn_counter.increase();
+                self.current_in_buffer += data.buf.len();
+                stream_info.queue.insert(data.stream_seq_num, data);
+
+                // Check if any reordered packets can now be received
+                while self
+                    .tsn_reorder_buffer
+                    .first_key_value()
+                    .map(|(tsn, _)| *tsn == self.tsn_counter.increase())
+                    .unwrap_or(false)
+                {
+                    let data = self.tsn_reorder_buffer.pop_first().unwrap().1;
+                    self.current_in_buffer -= data.buf.len();
+                    self.handle_in_order_packet(data);
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    }
+
+    pub fn handle_data_chunk(&mut self, data: DataChunk) {
+        match data.tsn.cmp(&self.tsn_counter.increase()) {
+            Ordering::Greater => {
+                // TSN reordering
+                // TODO make sure we always have space for packets
+                if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
+                    self.current_in_buffer += data.buf.len();
+                    self.tsn_reorder_buffer.insert(data.tsn, data);
+                    self.queue_ack();
+                    //eprint!("{:?} | ", self.tsn_counter);
+                    //self.tsn_reorder_buffer
+                    //    .iter()
+                    //    .for_each(|x| eprint!("{:?}", x.0));
+                    //eprintln!("");
+                }
+            }
+            Ordering::Equal => {
+                if self.handle_in_order_packet(data) {
+                    self.queue_ack();
+                }
+            }
+            Ordering::Less => {
+                // TODO just drop?
             }
         }
     }

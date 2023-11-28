@@ -9,7 +9,7 @@ pub enum CongestionState {
 }
 
 pub struct PerDestinationInfo {
-    state: CongestionState,
+    pub state: CongestionState,
     pub pmcds: usize,
     pub cwnd: usize,
     ssthresh: usize,
