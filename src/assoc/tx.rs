@@ -418,16 +418,14 @@ impl AssociationTx {
         match self.primary_congestion.state() {
             congestion::CongestionState::LossRecovery => {
                 if let Some(front) = self.resend_queue.front_mut() {
-                    if front.marked_for_retransmit {
-                        if front.data.buf.len() <= data_limit {
-                            let rtx = front.data.clone();
-                            front.marked_for_retransmit = false;
-                            if self.rto_timer.is_none() {
-                                self.set_timeout(now);
-                            }
-                            //eprintln!("Slow RTX: {:?}", rtx.tsn);
-                            return Some(rtx);
+                    if front.data.buf.len() <= data_limit && front.marked_for_retransmit {
+                        let rtx = front.data.clone();
+                        front.marked_for_retransmit = false;
+                        if self.rto_timer.is_none() {
+                            self.set_timeout(now);
                         }
+                        //eprintln!("Slow RTX: {:?}", rtx.tsn);
+                        return Some(rtx);
                     }
                 } else {
                     // TODO this is an internal bug
@@ -437,13 +435,14 @@ impl AssociationTx {
             }
             congestion::CongestionState::FastRecovery => {
                 for packet in self.resend_queue.iter_mut() {
-                    if packet.marked_for_fast_retransmit && !packet.marked_was_fast_retransmit {
-                        if packet.data.buf.len() <= data_limit {
-                            packet.marked_was_fast_retransmit = true;
-                            packet.marked_for_fast_retransmit = false;
-                            //eprintln!("Fast RTX {:?}", packet.data.tsn);
-                            return Some(packet.data.clone());
-                        }
+                    if packet.marked_for_fast_retransmit
+                        && !packet.marked_was_fast_retransmit
+                        && packet.data.buf.len() <= data_limit
+                    {
+                        packet.marked_was_fast_retransmit = true;
+                        packet.marked_for_fast_retransmit = false;
+                        //eprintln!("Fast RTX {:?}", packet.data.tsn);
+                        return Some(packet.data.clone());
                     }
                 }
                 None
