@@ -183,7 +183,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
                 ctr += 1;
-                if ctr % 20_000 == 0 {
+                if ctr % 1_00 == 0 {
                     let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
                     format_throughput(bytes_per_sec as usize);
                     start = std::time::Instant::now();

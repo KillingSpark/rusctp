@@ -25,7 +25,6 @@ pub struct AssociationTx {
 
     out_queue: VecDeque<DataChunk>,
     resend_queue: VecDeque<ResendEntry>,
-    marked: usize,
     send_next: VecDeque<Chunk>,
 
     tsn_counter: Tsn,
@@ -146,7 +145,6 @@ impl AssociationTx {
             out_queue: VecDeque::new(),
             current_in_flight: 0,
             resend_queue: VecDeque::new(),
-            marked: 0,
             send_next: VecDeque::new(),
 
             per_stream: vec![
@@ -197,9 +195,7 @@ impl AssociationTx {
         let mut bytes_acked = 0;
         let mut packet_acked = |acked: &ResendEntry| {
             self.current_out_buffered -= acked.data.buf.len();
-            if !acked.marked_for_retransmit {
-                self.current_in_flight -= acked.data.buf.len();
-            }
+            self.current_in_flight -= acked.data.buf.len();
             bytes_acked += acked.data.buf.len();
         };
         while self
@@ -250,18 +246,19 @@ impl AssociationTx {
                 kind: SendErrorKind::PeerClosed,
             });
         }
-        if self.current_out_buffered + data.len() > self.out_buffer_limit {
-            return Err(SendError {
-                kind: SendErrorKind::BufferFull,
-                data,
-            });
-        }
         let Some(stream_info) = self.per_stream.get_mut(stream as usize) else {
             return Err(SendError {
                 kind: SendErrorKind::UnknownStream,
                 data,
             });
         };
+        if self.current_out_buffered + data.len() > self.out_buffer_limit {
+            assert_eq!(self.resend_queue.iter().map(|p| p.data.buf.len()).sum::<usize>(), self.current_in_flight);
+            return Err(SendError {
+                kind: SendErrorKind::BufferFull,
+                data,
+            });
+        }
         self.current_out_buffered += data.len();
         self.out_queue.push_back(DataChunk {
             tsn: Tsn(0),
@@ -302,6 +299,10 @@ impl AssociationTx {
     }
 
     pub fn handle_timeout(&mut self, timeout: Timer) {
+        if self.resend_queue.is_empty() {
+            self.rto_timer = None;
+            return;
+        }
         if let Some(current_timer) = self.rto_timer {
             if current_timer.marker == timeout.marker {
                 self.primary_congestion.rto_expired();
@@ -312,8 +313,6 @@ impl AssociationTx {
                         && p.queued_at + self.srtt.rto_duration() <= timeout.at
                     {
                         p.marked_for_retransmit = true;
-                        self.marked += 1;
-                        self.current_in_flight -= p.data.buf.len();
                         p.queued_at = timeout.at;
                     }
                 });
@@ -337,94 +336,99 @@ impl AssociationTx {
         // The data chunk header always takes 16 bytes
         let data_limit = data_limit - 16;
 
-        // first send any outstanding packets that have been marked for a fast retransmit and fit in the limit
-        if let Some(front) = self.resend_queue.front_mut() {
-            if front.marked_for_fast_retransmit && !front.marked_was_fast_retransmit {
-                if front.data.buf.len() <= data_limit {
-                    front.marked_was_fast_retransmit = true;
-                    return Some(front.data.clone());
-                } else {
-                    return None;
-                }
-            }
-        }
-
-        // anything else is subject to the congestion window limits
-        let data_limit = self
-            .primary_congestion
-            .send_limit(self.current_in_flight, data_limit);
-
-        if self.marked > 0 {
-            for front in self.resend_queue.iter_mut() {
-                if front.marked_for_retransmit {
-                    if front.data.buf.len() <= data_limit {
-                        let rtx = front.data.clone();
-                        front.marked_for_retransmit = false;
-                        self.marked -= 1;
-                        if self.rto_timer.is_none() {
-                            self.set_timeout(now);
+        match self.primary_congestion.state() {
+            congestion::CongestionState::LossRecovery => {
+                if let Some(front) = self.resend_queue.front_mut() {
+                    if front.marked_for_retransmit {
+                        if front.data.buf.len() <= data_limit {
+                            let rtx = front.data.clone();
+                            front.marked_for_retransmit = false;
+                            if self.rto_timer.is_none() {
+                                self.set_timeout(now);
+                            }
+                            //eprintln!("Ye RTX: {:?}", rtx.tsn);
+                            return Some(rtx);
                         }
-                        self.current_in_flight += rtx.buf.len();
-                        return Some(rtx);
-                    } else {
-                        return None;
+                    }
+                    //eprintln!("No RTX {:?}", front.data.tsn);
+                } else {
+                    // TODO this is an internal bug
+                    panic!("We are in loss recovery but have no packets in the resend queue?!")
+                }
+                None
+            }
+            congestion::CongestionState::FastRecovery => {
+                if let Some(front) = self.resend_queue.front_mut() {
+                    if front.marked_for_fast_retransmit && !front.marked_was_fast_retransmit {
+                        if front.data.buf.len() <= data_limit {
+                            front.marked_was_fast_retransmit = true;
+                            return Some(front.data.clone());
+                        }
                     }
                 }
+                None
+            }
+            congestion::CongestionState::CongestionAvoidance
+            | congestion::CongestionState::SlowStart => {
+                // anything else is subject to the congestion window limits
+                let data_limit = self
+                    .primary_congestion
+                    .send_limit(self.current_in_flight, data_limit);
+
+                let front = self.out_queue.front()?;
+                let front_buf_len = front.buf.len();
+
+                // before sending new packets we need to check the peers receive window
+                if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
+                    return None;
+                }
+
+                // check if we can just send the next chunk entirely or if we need to fragment
+                let packet = if front_buf_len < data_limit {
+                    let mut packet = self.out_queue.pop_front()?;
+                    packet.tsn = self.tsn_counter;
+                    packet.end = true;
+
+                    packet
+                } else if front_buf_len > self.primary_congestion.pmcds {
+                    // TODO I am sure there are better metrics to determin usefulness of fragmentation
+                    let fragment_data_len = data_limit;
+                    if fragment_data_len == 0 {
+                        return None;
+                    }
+
+                    let full_packet = self.out_queue.front_mut()?;
+                    let fragment = DataChunk {
+                        tsn: self.tsn_counter,
+                        stream_id: full_packet.stream_id,
+                        stream_seq_num: full_packet.stream_seq_num,
+                        ppid: full_packet.ppid,
+                        buf: full_packet.buf.slice(0..fragment_data_len),
+
+                        immediate: full_packet.immediate,
+                        unordered: full_packet.unordered,
+                        begin: full_packet.begin,
+                        end: false,
+                    };
+
+                    full_packet.begin = false;
+                    full_packet.buf.advance(fragment_data_len);
+                    fragment
+                } else {
+                    return None;
+                };
+                self.tsn_counter = self.tsn_counter.increase();
+                self.peer_rcv_window -= packet.buf.len() as u32;
+                self.current_in_flight += packet.buf.len();
+                self.resend_queue
+                    .push_back(ResendEntry::new(packet.clone(), now));
+                self.primary_congestion.tsn_sent(packet.tsn);
+                self.srtt.tsn_sent(packet.tsn, now);
+                if self.rto_timer.is_none() {
+                    self.set_timeout(now);
+                }
+                Some(packet)
             }
         }
-
-        let front = self.out_queue.front()?;
-        let front_buf_len = front.buf.len();
-
-        // before sending new packets we need to check the peers receive window
-        if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
-            return None;
-        }
-
-        // check if we can just send the next chunk entirely or if we need to fragment
-        let packet = if front_buf_len < data_limit {
-            let mut packet = self.out_queue.pop_front()?;
-            packet.tsn = self.tsn_counter;
-            packet.end = true;
-
-            packet
-        } else if front_buf_len > self.primary_congestion.pmcds {
-            // TODO I am sure there are better metrics to determin usefulness of fragmentation
-            let fragment_data_len = data_limit;
-            if fragment_data_len == 0 {
-                return None;
-            }
-
-            let full_packet = self.out_queue.front_mut()?;
-            let fragment = DataChunk {
-                tsn: self.tsn_counter,
-                stream_id: full_packet.stream_id,
-                stream_seq_num: full_packet.stream_seq_num,
-                ppid: full_packet.ppid,
-                buf: full_packet.buf.slice(0..fragment_data_len),
-
-                immediate: full_packet.immediate,
-                unordered: full_packet.unordered,
-                begin: full_packet.begin,
-                end: false,
-            };
-
-            full_packet.begin = false;
-            full_packet.buf.advance(fragment_data_len);
-            fragment
-        } else {
-            return None;
-        };
-        self.tsn_counter = self.tsn_counter.increase();
-        self.peer_rcv_window -= packet.buf.len() as u32;
-        self.current_in_flight += packet.buf.len();
-        self.resend_queue
-            .push_back(ResendEntry::new(packet.clone(), now));
-        self.primary_congestion.tsn_sent(packet.tsn);
-        self.srtt.tsn_sent(packet.tsn, now);
-        if self.rto_timer.is_none() {
-            self.set_timeout(now);
-        }
-        Some(packet)
     }
 }

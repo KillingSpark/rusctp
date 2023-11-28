@@ -1,10 +1,11 @@
 use crate::packet::Tsn;
 
-#[derive(Debug, PartialEq, Eq)]
-enum CongestionState {
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CongestionState {
     SlowStart,
     FastRecovery,
     CongestionAvoidance,
+    LossRecovery,
 }
 
 pub struct PerDestinationInfo {
@@ -44,9 +45,14 @@ impl PerDestinationInfo {
 
     pub fn bytes_acked(&mut self, bytes_acked: usize, up_to_tsn: Tsn) {
         self.bytes_acked_counter += bytes_acked;
-        if bytes_acked > 0 && self.state == CongestionState::FastRecovery {
-            // Fast recovery did move the tsn, go back to slowstart
-            self.change_state(CongestionState::SlowStart);
+        if matches!(
+            self.state,
+            CongestionState::FastRecovery | CongestionState::LossRecovery
+        ) {
+            if bytes_acked > 0 {
+                // (Fast-) recovery did move the tsn, go back to slowstart
+                self.change_state(CongestionState::SlowStart);
+            }
         }
         if let Some(bytes_acked_start_tsn) = self.bytes_acked_start_tsn {
             if up_to_tsn >= bytes_acked_start_tsn {
@@ -68,7 +74,7 @@ impl PerDestinationInfo {
     pub fn rto_expired(&mut self) {
         self.ssthresh = self.cwnd / 2;
         self.cwnd = usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404));
-        self.change_state(CongestionState::CongestionAvoidance);
+        self.change_state(CongestionState::LossRecovery);
     }
 
     fn change_state(&mut self, state: CongestionState) {
@@ -104,7 +110,14 @@ impl PerDestinationInfo {
                 CongestionState::FastRecovery => {
                     // TODO do we do anything here?
                 }
+                CongestionState::LossRecovery => {
+                    // TODO do we do anything here?
+                }
             }
         }
+    }
+
+    pub fn state(&self) -> CongestionState {
+        self.state
     }
 }
