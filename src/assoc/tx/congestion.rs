@@ -1,5 +1,3 @@
-use crate::packet::Tsn;
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum CongestionState {
     SlowStart,
@@ -13,10 +11,7 @@ pub struct PerDestinationInfo {
     pub pmcds: usize,
     pub cwnd: usize,
     ssthresh: usize,
-    _partial_bytes_acked: usize,
-    bytes_acked_counter: usize,
-    bytes_acked_start_tsn: Option<Tsn>,
-    hit_limit: bool,
+    partial_bytes_acked: usize,
 }
 
 impl PerDestinationInfo {
@@ -27,37 +22,40 @@ impl PerDestinationInfo {
             pmcds,
             cwnd: usize::min(4 * pmcds, usize::max(2 * pmcds, 4404)),
             ssthresh: usize::MAX,
-            _partial_bytes_acked: 0,
-            bytes_acked_counter: 0,
-            bytes_acked_start_tsn: None,
-            hit_limit: false,
+            partial_bytes_acked: 0,
         }
     }
 
-    pub fn send_limit(&mut self, current_outstanding: usize, want_to_send: usize) -> usize {
-        let limit = self.cwnd.saturating_sub(current_outstanding);
-        let limit = usize::min(want_to_send, limit);
-        if limit < want_to_send {
-            self.hit_limit = true;
-        }
-        limit
-    }
-
-    pub fn bytes_acked(&mut self, bytes_acked: usize, up_to_tsn: Tsn) {
-        self.bytes_acked_counter += bytes_acked;
-        if matches!(
-            self.state,
-            CongestionState::FastRecovery | CongestionState::LossRecovery
-        ) {
-            if bytes_acked > 0 {
+    pub fn bytes_acked(
+        &mut self,
+        partial_bytes_acked: usize,
+        bytes_acked: usize,
+        in_flight_before_sack: usize,
+    ) {
+        match self.state {
+            CongestionState::FastRecovery | CongestionState::LossRecovery => {
                 // (Fast-) recovery did move the tsn, go back to slowstart
                 self.change_state(CongestionState::SlowStart);
             }
-        }
-        if let Some(bytes_acked_start_tsn) = self.bytes_acked_start_tsn {
-            if up_to_tsn >= bytes_acked_start_tsn {
-                self.bytes_acked_start_tsn = None;
-                self.adjust_cwnd();
+            CongestionState::CongestionAvoidance => {
+                self.partial_bytes_acked += bytes_acked + partial_bytes_acked;
+                if self.partial_bytes_acked >= self.cwnd {
+                    if in_flight_before_sack < self.cwnd {
+                        self.partial_bytes_acked = self.cwnd;
+                    } else {
+                        self.partial_bytes_acked -= self.cwnd;
+                        self.cwnd += 10; //self.pmcds;
+                    }
+                }
+            }
+            CongestionState::SlowStart => {
+                if in_flight_before_sack >= self.cwnd {
+                    self.cwnd += usize::max(2 * self.pmcds, bytes_acked);
+                }
+                if self.cwnd >= self.ssthresh {
+                    self.cwnd = self.ssthresh;
+                    self.change_state(CongestionState::CongestionAvoidance);
+                }
             }
         }
     }
@@ -78,43 +76,7 @@ impl PerDestinationInfo {
     }
 
     fn change_state(&mut self, state: CongestionState) {
-        self.bytes_acked_start_tsn = None;
-        self.bytes_acked_counter = 0;
         self.state = state;
-    }
-
-    pub fn tsn_sent(&mut self, tsn: Tsn) {
-        if self.bytes_acked_start_tsn.is_none() {
-            self.bytes_acked_start_tsn = Some(tsn);
-            self.bytes_acked_counter = 0;
-        }
-    }
-
-    fn adjust_cwnd(&mut self) {
-        let bytes_acked = self.bytes_acked_counter;
-        let hit_limit = self.hit_limit;
-        self.bytes_acked_counter = 0;
-        self.hit_limit = false;
-        if hit_limit {
-            match self.state {
-                CongestionState::SlowStart => {
-                    self.cwnd += usize::max(bytes_acked, usize::min(self.pmcds, bytes_acked));
-                    if self.cwnd >= self.ssthresh {
-                        self.cwnd = self.ssthresh;
-                        self.change_state(CongestionState::CongestionAvoidance);
-                    }
-                }
-                CongestionState::CongestionAvoidance => {
-                    self.cwnd += usize::min(self.pmcds, bytes_acked);
-                }
-                CongestionState::FastRecovery => {
-                    // TODO do we do anything here?
-                }
-                CongestionState::LossRecovery => {
-                    // TODO do we do anything here?
-                }
-            }
-        }
     }
 
     pub fn state(&self) -> CongestionState {

@@ -50,6 +50,7 @@ struct ResendEntry {
     marked_for_retransmit: bool,
     marked_for_fast_retransmit: bool,
     marked_was_fast_retransmit: bool,
+    partially_acked: bool,
 }
 
 impl ResendEntry {
@@ -60,6 +61,7 @@ impl ResendEntry {
             marked_for_retransmit: false,
             marked_for_fast_retransmit: false,
             marked_was_fast_retransmit: false,
+            partially_acked: false,
         }
     }
 }
@@ -174,7 +176,53 @@ impl AssociationTx {
         }
     }
 
+    fn process_sack_gap_blocks(
+        &mut self,
+        sack: &SelectiveAck,
+        fully_acked: usize,
+        in_flight_before_sack: usize,
+    ) {
+        let mut partial_bytes_acked = 0;
+        let mut block_iter = sack.blocks.iter().map(|(start, end)| {
+            (
+                Tsn(sack.cum_tsn.0 + *start as u32),
+                Tsn(sack.cum_tsn.0 + *end as u32),
+            )
+        });
+        let mut queue_iter = self.resend_queue.iter_mut();
+
+        let mut next_block = block_iter.next();
+        let mut next_packet = queue_iter.next();
+        while let Some((block_range, packet)) = next_block.zip(next_packet) {
+            if packet.partially_acked {
+                next_packet = queue_iter.next();
+            } else if packet.data.tsn < block_range.0 {
+                // Missing packet
+                // TODO we may only mark as many packets as fit in a PMTU and only once when we enter fast recovery
+                packet.marked_for_fast_retransmit = true;
+                next_packet = queue_iter.next();
+            } else if packet.data.tsn >= block_range.0 && packet.data.tsn < block_range.1 {
+                // Packet received
+                // TODO what about sacks that contain this range multiple times?
+                partial_bytes_acked += packet.data.buf.len();
+                packet.partially_acked = true;
+                next_packet = queue_iter.next();
+            } else {
+                // take next block
+                next_block = block_iter.next();
+                next_packet = Some(packet);
+            }
+        }
+        self.primary_congestion.bytes_acked(
+            partial_bytes_acked,
+            fully_acked,
+            in_flight_before_sack,
+        );
+    }
+
     fn handle_sack(&mut self, sack: SelectiveAck, now: Instant) {
+        let in_flight_before_sack = self.current_in_flight;
+
         if self.last_acked_tsn > sack.cum_tsn {
             // This is a reordered sack, we can safely ignore this
             return;
@@ -184,19 +232,8 @@ impl AssociationTx {
             self.duplicated_acks += 1;
             if self.duplicated_acks >= 2 {
                 self.primary_congestion.enter_fast_recovery();
-                for block in sack.blocks {
-                    let start = sack.cum_tsn.0 + block.0 as u32;
-                    let end = sack.cum_tsn.0 + block.1 as u32;
-
-                    let range = start..end + 1;
-                    self.resend_queue.iter_mut().for_each(|packet| {
-                        if !range.contains(&packet.data.tsn.0) {
-                            // TODO we may only mark as many packets as fit in a PMTU and only once when we enter fast recovery
-                            packet.marked_for_fast_retransmit = true;
-                        }
-                    });
-                }
             }
+            self.process_sack_gap_blocks(&sack, 0, in_flight_before_sack);
             return;
         }
 
@@ -204,11 +241,7 @@ impl AssociationTx {
         self.duplicated_acks = 0;
 
         let mut bytes_acked = 0;
-        let mut packet_acked = |acked: &ResendEntry| {
-            self.current_out_buffered -= acked.data.buf.len();
-            self.current_in_flight -= acked.data.buf.len();
-            bytes_acked += acked.data.buf.len();
-        };
+
         while self
             .resend_queue
             .front()
@@ -216,12 +249,14 @@ impl AssociationTx {
             .unwrap_or(false)
         {
             let acked = self.resend_queue.pop_front().unwrap();
-            packet_acked(&acked);
+            self.current_out_buffered -= acked.data.buf.len();
+            self.current_in_flight -= acked.data.buf.len();
+            bytes_acked += acked.data.buf.len();
         }
 
+        self.process_sack_gap_blocks(&sack, bytes_acked, in_flight_before_sack);
+
         self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
-        self.primary_congestion
-            .bytes_acked(bytes_acked, sack.cum_tsn);
         self.srtt.tsn_acked(sack.cum_tsn, now);
         if bytes_acked > 0 {
             if self.current_in_flight > 0 {
@@ -394,7 +429,6 @@ impl AssociationTx {
                             return Some(rtx);
                         }
                     }
-                    //eprintln!("No RTX {:?}", front.data.tsn);
                 } else {
                     // TODO this is an internal bug
                     panic!("We are in loss recovery but have no packets in the resend queue?!")
@@ -417,10 +451,6 @@ impl AssociationTx {
             congestion::CongestionState::CongestionAvoidance
             | congestion::CongestionState::SlowStart => {
                 // anything else is subject to the congestion window limits
-                let data_limit = self
-                    .primary_congestion
-                    .send_limit(self.current_in_flight, data_limit);
-
                 let front = self.out_queue.front()?;
                 let front_buf_len = front.buf.len();
 
@@ -430,13 +460,15 @@ impl AssociationTx {
                 }
 
                 // check if we can just send the next chunk entirely or if we need to fragment
-                let packet = if front_buf_len < data_limit {
+                let packet = if front_buf_len < data_limit
+                    && self.current_in_flight < self.primary_congestion.cwnd
+                {
                     let mut packet = self.out_queue.pop_front()?;
                     packet.tsn = self.tsn_counter;
                     packet.end = true;
 
                     packet
-                } else if front_buf_len > self.primary_congestion.pmcds {
+                } else if false {
                     // TODO I am sure there are better metrics to determin usefulness of fragmentation
                     let fragment_data_len = data_limit;
                     if fragment_data_len == 0 {
@@ -468,7 +500,6 @@ impl AssociationTx {
                 self.current_in_flight += packet.buf.len();
                 self.resend_queue
                     .push_back(ResendEntry::new(packet.clone(), now));
-                self.primary_congestion.tsn_sent(packet.tsn);
                 self.srtt.tsn_sent(packet.tsn, now);
                 if self.rto_timer.is_none() {
                     self.set_timeout(now);

@@ -24,8 +24,8 @@ fn main() {
     }
 }
 
-const PMTU: usize = 10_000;
-const PRINT_EVERY_X_BTES: u64 = 100_000_000;
+const PMTU: usize = 64_000;
+const PRINT_EVERY_X_BTES: u64 = 1_000_000_000;
 
 fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
