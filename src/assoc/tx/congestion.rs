@@ -34,8 +34,10 @@ impl PerDestinationInfo {
     ) {
         match self.state {
             CongestionState::FastRecovery | CongestionState::LossRecovery => {
-                // (Fast-) recovery did move the tsn, go back to slowstart
-                self.change_state(CongestionState::SlowStart);
+                if bytes_acked > 0 {
+                    // (Fast-) recovery did move the tsn, go back to slowstart
+                    self.change_state(CongestionState::SlowStart);
+                }
             }
             CongestionState::CongestionAvoidance => {
                 self.partial_bytes_acked += bytes_acked + partial_bytes_acked;
@@ -44,7 +46,7 @@ impl PerDestinationInfo {
                         self.partial_bytes_acked = self.cwnd;
                     } else {
                         self.partial_bytes_acked -= self.cwnd;
-                        self.cwnd += 10; //self.pmcds;
+                        self.cwnd += self.pmcds.min(1000);
                     }
                 }
             }
