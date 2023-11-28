@@ -23,7 +23,7 @@ fn main() {
     }
 }
 
-const PMTU: usize = 10_000;
+const PMTU: usize = 64_000;
 
 fn run_client(
     transport_tx: Sender<Bytes>,
@@ -41,8 +41,8 @@ fn run_client(
             cookie_secret: b"oh boy a secret string".to_vec(),
             incoming_streams: 10,
             outgoing_streams: 10,
-            in_buffer_limit: 100 * 1024,
-            out_buffer_limit: 100 * 1024,
+            in_buffer_limit: 1000 * PMTU,
+            out_buffer_limit: 1000 * PMTU,
             pmtu: PMTU,
         }));
 
@@ -128,8 +128,8 @@ fn run_server(
             cookie_secret: b"oh boy a secret string".to_vec(),
             incoming_streams: 10,
             outgoing_streams: 10,
-            in_buffer_limit: 100 * 1024,
-            out_buffer_limit: 100 * 1024,
+            in_buffer_limit: 1000 * PMTU,
+            out_buffer_limit: 1000 * PMTU,
             pmtu: PMTU,
         }));
 
@@ -178,7 +178,7 @@ fn run_server(
                 ctr += 1;
                 if ctr % 10_000 == 0 {
                     eprintln!(
-                        "{ctr} {}",
+                        "{:12}",
                         (1_000_000 * bytes_ctr)
                             / (std::time::Instant::now() - start).as_micros() as u64
                     );
