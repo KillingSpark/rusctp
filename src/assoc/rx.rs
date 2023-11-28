@@ -131,6 +131,15 @@ impl AssociationRx {
 
                         let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
                         self.last_sent_arwnd = a_rwnd;
+
+                        // TODO send tsn gap blocks
+                        self.tx_notifications
+                            .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                                cum_tsn: self.tsn_counter,
+                                a_rwnd,
+                                blocks: vec![],
+                                duplicated_tsn: vec![],
+                            })));
                     }
                 }
                 Ordering::Equal => {
