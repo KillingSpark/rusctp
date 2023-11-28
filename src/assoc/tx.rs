@@ -25,6 +25,7 @@ pub struct AssociationTx {
 
     out_queue: VecDeque<DataChunk>,
     resend_queue: VecDeque<ResendEntry>,
+    marked: usize,
     send_next: VecDeque<Chunk>,
 
     tsn_counter: Tsn,
@@ -145,6 +146,7 @@ impl AssociationTx {
             out_queue: VecDeque::new(),
             current_in_flight: 0,
             resend_queue: VecDeque::new(),
+            marked: 0,
             send_next: VecDeque::new(),
 
             per_stream: vec![
@@ -306,8 +308,11 @@ impl AssociationTx {
                 self.srtt.rto_expired();
 
                 self.resend_queue.iter_mut().for_each(|p| {
-                    if p.queued_at + self.srtt.rto_duration() <= timeout.at {
+                    if !p.marked_for_retransmit
+                        && p.queued_at + self.srtt.rto_duration() <= timeout.at
+                    {
                         p.marked_for_retransmit = true;
+                        self.marked += 1;
                         self.current_in_flight -= p.data.buf.len();
                         p.queued_at = timeout.at;
                     }
@@ -349,18 +354,21 @@ impl AssociationTx {
             .primary_congestion
             .send_limit(self.current_in_flight, data_limit);
 
-        for front in self.resend_queue.iter_mut() {
-            if front.marked_for_retransmit {
-                if front.data.buf.len() <= data_limit {
-                    let rtx = front.data.clone();
-                    front.marked_for_retransmit = false;
-                    if self.rto_timer.is_none() {
-                        self.set_timeout(now);
+        if self.marked > 0 {
+            for front in self.resend_queue.iter_mut() {
+                if front.marked_for_retransmit {
+                    if front.data.buf.len() <= data_limit {
+                        let rtx = front.data.clone();
+                        front.marked_for_retransmit = false;
+                        self.marked -= 1;
+                        if self.rto_timer.is_none() {
+                            self.set_timeout(now);
+                        }
+                        self.current_in_flight += rtx.buf.len();
+                        return Some(rtx);
+                    } else {
+                        return None;
                     }
-                    self.current_in_flight += rtx.buf.len();
-                    return Some(rtx);
-                } else {
-                    return None;
                 }
             }
         }

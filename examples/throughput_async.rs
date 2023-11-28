@@ -24,7 +24,7 @@ fn main() {
     }
 }
 
-const PMTU: usize = 50_000;
+const PMTU: usize = 40_000;
 
 fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -183,25 +183,9 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
                 ctr += 1;
-                if ctr % 10_00 == 0 {
+                if ctr % 20_000 == 0 {
                     let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
-
-                    if bytes_per_sec > 1_000_000_000 {
-                        eprintln!(
-                            "{ctr} {:3} Gb/s",
-                            bytes_per_sec / 1_000_000_000
-                        );
-                    } else if bytes_per_sec > 1_000_000 {
-                        eprintln!(
-                            "{ctr} {:3} Mb/s",
-                            bytes_per_sec / 1_000_000
-                        );
-                    } else {
-                        eprintln!(
-                            "{ctr} {:3} b/s",
-                            bytes_per_sec
-                        );
-                    }
+                    format_throughput(bytes_per_sec as usize);
                     start = std::time::Instant::now();
                     bytes_ctr = 0;
                 }
@@ -271,4 +255,24 @@ async fn send_chunk(
 
     socket.send(&buf).await?;
     Ok(())
+}
+
+
+fn format_throughput(bytes_per_sec: usize) {
+    if bytes_per_sec > 1_000_000_000 {
+        eprintln!(
+            "{:3} Gb/s",
+            bytes_per_sec / 1_000_000_000
+        );
+    } else if bytes_per_sec > 1_000_000 {
+        eprintln!(
+            "{:3} Mb/s",
+            bytes_per_sec / 1_000_000
+        );
+    } else {
+        eprintln!(
+            "{:3} b/s",
+            bytes_per_sec
+        );
+    }
 }

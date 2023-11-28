@@ -125,8 +125,13 @@ impl AssociationRx {
                 Ordering::Greater => {
                     // TSN reordering
                     // TODO make sure we always have space for packets
-                    self.current_in_buffer += data.buf.len();
-                    self.tsn_reorder_buffer.insert(data.tsn, data);
+                    if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
+                        self.current_in_buffer += data.buf.len();
+                        self.tsn_reorder_buffer.insert(data.tsn, data);
+
+                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+                        self.last_sent_arwnd = a_rwnd;
+                    }
                 }
                 Ordering::Equal => {
                     self.tsn_counter = self.tsn_counter.increase();
