@@ -77,11 +77,20 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         let echo_tx = tx.clone();
         tokio::spawn(async move {
             let data = Bytes::copy_from_slice(&[0u8; PMTU - 200]);
+            let mut bytes_ctr = 0;
+            let mut start = Instant::now();
             loop {
                 echo_tx
                     .send_data(data.clone(), 0, 0, false, false)
                     .await
-                    .unwrap()
+                    .unwrap();
+                    bytes_ctr += data.len() as u64;
+                    if bytes_ctr >= PRINT_EVERY_X_BTES {
+                        let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
+                        format_throughput("Send", bytes_per_sec as usize);
+                        start = std::time::Instant::now();
+                        bytes_ctr = 0;
+                    }
             }
         });
         tokio::spawn(async move {
@@ -184,7 +193,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 bytes_ctr += data.len() as u64;
                 if bytes_ctr >= PRINT_EVERY_X_BTES {
                     let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
-                    format_throughput(bytes_per_sec as usize);
+                    format_throughput("Recv", bytes_per_sec as usize);
                     start = std::time::Instant::now();
                     bytes_ctr = 0;
                 }
@@ -256,12 +265,12 @@ async fn send_chunk(
     Ok(())
 }
 
-fn format_throughput(bytes_per_sec: usize) {
+fn format_throughput(place: &str, bytes_per_sec: usize) {
     if bytes_per_sec > 1_000_000_000 {
-        eprintln!("{:3} Gb/s", bytes_per_sec / 1_000_000_000);
+        eprintln!("{place} {:3} Gb/s", bytes_per_sec / 1_000_000_000);
     } else if bytes_per_sec > 1_000_000 {
-        eprintln!("{:3} Mb/s", bytes_per_sec / 1_000_000);
+        eprintln!("{place} {:3} Mb/s", bytes_per_sec / 1_000_000);
     } else {
-        eprintln!("{:3} b/s", bytes_per_sec);
+        eprintln!("{place} {:3} b/s", bytes_per_sec);
     }
 }
