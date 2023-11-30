@@ -142,6 +142,8 @@ impl Sctp {
             peer_port: packet.from(),
             local_port: packet.to(),
         }) {
+            // TODO handle this better. Technically we have a new association here
+            // We might get away with just updating the verification tag and expected tsns in the RX/TX?
             return HandleSpecialResult::Handled(*existing);
         }
 
@@ -292,6 +294,8 @@ impl Sctp {
             peer_port: packet.from(),
             local_port: packet.to(),
         }) {
+            // TODO handle this better. Technically we have a new association here
+            // We might get away with just updating the verification tag and expected tsns in the RX/TX?
             return HandleSpecialResult::Handled(*existing);
         }
 
