@@ -1,6 +1,7 @@
 use std::{
+    collections::HashMap,
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -9,7 +10,7 @@ use rand::RngCore;
 use rusctp::{
     assoc_async::assoc::{AssociationTx, Sctp},
     packet::{Chunk, Packet},
-    Settings,
+    Settings, TransportAddress,
 };
 use tokio::net::UdpSocket;
 
@@ -20,19 +21,22 @@ fn main() {
     let _rt_client;
 
     let mode = args.next();
-    let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
-    let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
     match mode.as_ref().map(|x| x.as_str()) {
         Some("client") => {
+            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
+            let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
             _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
         }
         Some("server") => {
-            _rt_client = run_server(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
+            _rt_client = run_server(server_addr.parse().unwrap());
         }
         unknown => {
             eprintln!("{unknown:?}");
 
-            _rt_server = run_server(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+            let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
+            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
+            _rt_server = run_server(server_addr.parse().unwrap());
             _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
         }
     }
@@ -64,7 +68,6 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         }));
 
         let socket = Arc::new(UdpSocket::bind(client_addr).await.unwrap());
-        socket.connect(server_addr).await.unwrap();
 
         {
             let sctp = sctp.clone();
@@ -72,7 +75,9 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             tokio::spawn(async move {
                 loop {
                     let (_, packet, chunk) = sctp.next_send_immediate().await;
-                    send_chunk(&socket, packet, chunk).await.unwrap();
+                    send_chunk(&socket, server_addr, packet, chunk)
+                        .await
+                        .unwrap();
                 }
             });
         }
@@ -128,7 +133,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
 
                 tokio::select! {
                     packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
-                        send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                        send_to(&socket, server_addr, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
                         tx.handle_timeout(timer);
@@ -139,6 +144,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
 
                 send_to(
                     &socket,
+                    server_addr,
                     packet,
                     chunk_buf_limit.get_ref().as_ref(),
                     &mut packet_buf,
@@ -152,14 +158,12 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
     runtime
 }
 
-fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtime::Runtime {
+fn run_server(server_addr: SocketAddr) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
         .build()
         .unwrap();
-
-    let fake_addr = rusctp::TransportAddress::Fake(200);
 
     runtime.spawn(async move {
         let sctp = Arc::new(Sctp::new(Settings {
@@ -171,26 +175,58 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             pmtu: PMTU,
         }));
 
+        let real_to_fake_addr = Arc::new(RwLock::new(HashMap::new()));
+        let fake_to_real_addr =
+            Arc::new(RwLock::new(HashMap::<TransportAddress, SocketAddr>::new()));
         let socket = Arc::new(UdpSocket::bind(server_addr).await.unwrap());
-        socket.connect(client_addr).await.unwrap();
+
+        fn get_fake_addr(
+            addr: SocketAddr,
+            addrs: &Arc<RwLock<HashMap<SocketAddr, TransportAddress>>>,
+        ) -> Option<TransportAddress> {
+            addrs.read().unwrap().get(&addr).copied()
+        }
 
         {
             let sctp = sctp.clone();
             let socket = socket.clone();
+            let fake_to_real_addr = fake_to_real_addr.clone();
             tokio::spawn(async move {
                 loop {
-                    let (_, packet, chunk) = sctp.next_send_immediate().await;
-                    send_chunk(&socket, packet, chunk).await.unwrap();
+                    let (fake_addr, packet, chunk) = sctp.next_send_immediate().await;
+                    let addr;
+                    {
+                        addr = fake_to_real_addr.read().unwrap().get(&fake_addr).copied();
+                    }
+                    if let Some(addr) = addr {
+                        send_chunk(&socket, addr, packet, chunk).await.unwrap();
+                    }
                 }
             });
         }
         {
             let sctp = sctp.clone();
             let socket = socket.clone();
+            let real_to_fake_addr = real_to_fake_addr.clone();
+            let fake_to_real_addr = fake_to_real_addr.clone();
             tokio::spawn(async move {
                 loop {
                     let mut buf = [0u8; PMTU];
-                    while let Ok(size) = socket.recv(&mut buf).await {
+                    while let Ok((size, client_addr)) = socket.recv_from(&mut buf).await {
+                        let fake_addr;
+                        if let Some(exisiting) = get_fake_addr(client_addr, &real_to_fake_addr) {
+                            fake_addr = exisiting;
+                        } else {
+                            fake_addr = TransportAddress::Fake(rand::thread_rng().next_u64());
+                            real_to_fake_addr
+                                .write()
+                                .unwrap()
+                                .insert(client_addr, fake_addr);
+                            fake_to_real_addr
+                                .write()
+                                .unwrap()
+                                .insert(fake_addr, client_addr);
+                        }
                         sctp.receive_data(Bytes::copy_from_slice(&buf[..size]), fake_addr);
                     }
                 }
@@ -200,6 +236,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         loop {
             let assoc = sctp.accept().await;
             let socket = socket.clone();
+            let fake_to_real_addr = fake_to_real_addr.clone();
             tokio::spawn(async move {
                 eprintln!("Server got assoc");
                 let (tx, rx) = assoc.split();
@@ -238,7 +275,8 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                         let timeout = timer.at() - Instant::now();
                         tokio::select! {
                             packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
-                                send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                                let addr = *fake_to_real_addr.read().unwrap().get(&tx.primary_path()).unwrap();
+                                send_to(&socket, addr, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
                             }
                             _ = tokio::time::sleep(timeout) => {
                                 tx.handle_timeout(timer);
@@ -246,8 +284,14 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                         };
                     } else {
                         let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
+                        let addr = *fake_to_real_addr
+                            .read()
+                            .unwrap()
+                            .get(&tx.primary_path())
+                            .unwrap();
                         send_to(
                             &socket,
+                            addr,
                             packet,
                             chunk_buf_limit.get_ref().as_ref(),
                             &mut packet_buf,
@@ -274,6 +318,7 @@ async fn collect_all_chunks(tx: &Arc<AssociationTx>, chunks: &mut impl BufMut) -
 
 async fn send_to(
     socket: &UdpSocket,
+    addr: SocketAddr,
     packet: Packet,
     chunkbuf: &[u8],
     buf: &mut BytesMut,
@@ -281,12 +326,13 @@ async fn send_to(
     packet.serialize(buf, chunkbuf);
     buf.put_slice(&chunkbuf);
 
-    socket.send(&buf).await?;
+    socket.send_to(&buf, addr).await?;
     Ok(())
 }
 
 async fn send_chunk(
     socket: &UdpSocket,
+    addr: SocketAddr,
     packet: Packet,
     chunk: Chunk,
 ) -> Result<(), tokio::io::Error> {
@@ -297,7 +343,7 @@ async fn send_chunk(
     packet.serialize(&mut buf, chunkbuf.clone());
     buf.put_slice(&chunkbuf);
 
-    socket.send(&buf).await?;
+    socket.send_to(&buf, addr).await?;
     Ok(())
 }
 

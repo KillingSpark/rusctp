@@ -369,6 +369,10 @@ impl AssociationTx {
             })
             .map(|chunk| (wrapped.tx.packet_header(), chunk))
     }
+
+    pub fn primary_path(&self) -> TransportAddress {
+        self.wrapped.lock().unwrap().tx.primary_path()
+    }
 }
 
 impl AssociationRx {
