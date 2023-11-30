@@ -5,6 +5,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
+use rand::RngCore;
 use rusctp::{
     assoc_async::assoc::{AssociationTx, Sctp},
     packet::{Chunk, Packet},
@@ -19,9 +20,8 @@ fn main() {
     let _rt_client;
 
     let mode = args.next();
-    let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
     let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
-
+    let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
     match mode.as_ref().map(|x| x.as_str()) {
         Some("client") => {
             _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
@@ -31,8 +31,6 @@ fn main() {
         }
         unknown => {
             eprintln!("{unknown:?}");
-            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
-            let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
 
             _rt_server = run_server(client_addr.parse().unwrap(), server_addr.parse().unwrap());
             _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
@@ -54,7 +52,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         .build()
         .unwrap();
     let fake_addr = rusctp::TransportAddress::Fake(100);
-
+    let port = rand::thread_rng().next_u32() as u16;
     runtime.spawn(async move {
         let sctp = Arc::new(Sctp::new(Settings {
             cookie_secret: b"oh boy a secret string".to_vec(),
@@ -90,7 +88,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 }
             });
         }
-        let assoc = sctp.connect(fake_addr, 100, 200).await;
+        let assoc = sctp.connect(fake_addr, port, 200).await;
         eprintln!("Client got assoc");
         let (tx, rx) = assoc.split();
 
