@@ -13,11 +13,31 @@ use rusctp::{
 use tokio::net::UdpSocket;
 
 fn main() {
-    let server_addr = "127.0.0.1:1337";
-    let client_addr = "127.0.0.1:1338";
+    let mut args = std::env::args();
+    args.next();
+    let _rt_server;
+    let _rt_client;
 
-    let _rt_server = run_server(client_addr.parse().unwrap(), server_addr.parse().unwrap());
-    let _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+    let mode = args.next();
+    let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
+    let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
+
+    match mode.as_ref().map(|x| x.as_str()) {
+        Some("client") => {
+            _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+        }
+        Some("server") => {
+            _rt_client = run_server(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+        }
+        unknown => {
+            eprintln!("{unknown:?}");
+            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
+            let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
+
+            _rt_server = run_server(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+            _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+        }
+    }
 
     loop {
         std::thread::sleep(Duration::from_secs(1000));
@@ -84,13 +104,14 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                     .send_data(data.clone(), 0, 0, false, false)
                     .await
                     .unwrap();
-                    bytes_ctr += data.len() as u64;
-                    if bytes_ctr >= PRINT_EVERY_X_BTES {
-                        let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
-                        format_throughput("Send", bytes_per_sec as usize);
-                        start = std::time::Instant::now();
-                        bytes_ctr = 0;
-                    }
+                bytes_ctr += data.len() as u64;
+                if bytes_ctr >= PRINT_EVERY_X_BTES {
+                    let bytes_per_sec = (1_000_000 * bytes_ctr)
+                        / (std::time::Instant::now() - start).as_micros() as u64;
+                    format_throughput("Send", bytes_per_sec as usize);
+                    start = std::time::Instant::now();
+                    bytes_ctr = 0;
+                }
             }
         });
         tokio::spawn(async move {
@@ -118,7 +139,14 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             } else {
                 let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
 
-                send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                send_to(
+                    &socket,
+                    packet,
+                    chunk_buf_limit.get_ref().as_ref(),
+                    &mut packet_buf,
+                )
+                .await
+                .unwrap();
             }
             chunk_buf = chunk_buf_limit.into_inner();
         }
@@ -170,58 +198,68 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                 }
             });
         }
-        // Either wait for a connection or just initiate one with the same ports
-        // let assoc = sctp.accept().await;
-        let assoc = sctp.connect(fake_addr, 200, 100).await;
-        eprintln!("Server got assoc");
-        let (tx, rx) = assoc.split();
-        //let echo_tx = tx.clone();
-        //tokio::spawn(async move {
-        //    let data = Bytes::copy_from_slice(&[0u8; PMTU - 200]);
-        //    loop {
-        //        echo_tx
-        //            .send_data(data.clone(), 0, 0, false, false)
-        //            .await
-        //            .unwrap()
-        //    }
-        //});
-        tokio::spawn(async move {
-            let mut bytes_ctr = 0u64;
-            let mut start = std::time::Instant::now();
-            loop {
-                let data = rx.recv_data(0).await.unwrap();
-                bytes_ctr += data.len() as u64;
-                if bytes_ctr >= PRINT_EVERY_X_BTES {
-                    let bytes_per_sec = (1_000_000 * bytes_ctr) / (std::time::Instant::now() - start).as_micros() as u64;
-                    format_throughput("Recv", bytes_per_sec as usize);
-                    start = std::time::Instant::now();
-                    bytes_ctr = 0;
-                }
-            }
-        });
-        let mut chunk_buf = BytesMut::with_capacity(PMTU - 100);
-        let mut packet_buf = BytesMut::with_capacity(PMTU);
+
         loop {
-            chunk_buf.clear();
-            packet_buf.clear();
-            let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
-            if let Some(timer) = tx.next_timeout() {
-                let timeout = timer.at() - Instant::now();
-
-                tokio::select! {
-                    packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
-                        send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+            let assoc = sctp.accept().await;
+            let socket = socket.clone();
+            tokio::spawn(async move {
+                eprintln!("Server got assoc");
+                let (tx, rx) = assoc.split();
+                //let echo_tx = tx.clone();
+                //tokio::spawn(async move {
+                //    let data = Bytes::copy_from_slice(&[0u8; PMTU - 200]);
+                //    loop {
+                //        echo_tx
+                //            .send_data(data.clone(), 0, 0, false, false)
+                //            .await
+                //            .unwrap()
+                //    }
+                //});
+                tokio::spawn(async move {
+                    let mut bytes_ctr = 0u64;
+                    let mut start = std::time::Instant::now();
+                    loop {
+                        let data = rx.recv_data(0).await.unwrap();
+                        bytes_ctr += data.len() as u64;
+                        if bytes_ctr >= PRINT_EVERY_X_BTES {
+                            let bytes_per_sec = (1_000_000 * bytes_ctr)
+                                / (std::time::Instant::now() - start).as_micros() as u64;
+                            format_throughput("Recv", bytes_per_sec as usize);
+                            start = std::time::Instant::now();
+                            bytes_ctr = 0;
+                        }
                     }
-                    _ = tokio::time::sleep(timeout) => {
-                        tx.handle_timeout(timer);
+                });
+                let mut chunk_buf = BytesMut::with_capacity(PMTU - 100);
+                let mut packet_buf = BytesMut::with_capacity(PMTU);
+                loop {
+                    chunk_buf.clear();
+                    packet_buf.clear();
+                    let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
+                    if let Some(timer) = tx.next_timeout() {
+                        let timeout = timer.at() - Instant::now();
+                        tokio::select! {
+                            packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
+                                send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                            }
+                            _ = tokio::time::sleep(timeout) => {
+                                tx.handle_timeout(timer);
+                            }
+                        };
+                    } else {
+                        let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
+                        send_to(
+                            &socket,
+                            packet,
+                            chunk_buf_limit.get_ref().as_ref(),
+                            &mut packet_buf,
+                        )
+                        .await
+                        .unwrap();
                     }
-                };
-            } else {
-                let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
-
-                send_to(&socket, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
-            }
-            chunk_buf = chunk_buf_limit.into_inner();
+                    chunk_buf = chunk_buf_limit.into_inner();
+                }
+            });
         }
     });
     runtime
