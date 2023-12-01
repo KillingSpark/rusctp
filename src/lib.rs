@@ -179,7 +179,7 @@ impl Sctp {
                         // TODO this is an error, init chunks may only occur as the first and single chunk in a packet
                     } else {
                         match chunk {
-                            Chunk::Abort => {
+                            Chunk::Abort { .. } => {
                                 self.aliases.retain(|_, id| *id != assoc_id);
                                 // TODO delete any half open connections on abort
                                 self.assoc_infos.remove(&assoc_id);

@@ -6,8 +6,8 @@ use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 use bytes::{Buf, Bytes};
 
-use super::ShutdownState;
 use super::srtt::Srtt;
+use super::ShutdownState;
 
 mod congestion;
 
@@ -187,7 +187,8 @@ impl AssociationTx {
                 self.shutdown_state = Some(ShutdownState::ShutdownReceived);
             }
             TxNotification::PeerShutdownAck => {
-                self.send_next.push_back(Chunk::ShutDownComplete);
+                self.send_next
+                    .push_back(Chunk::ShutDownComplete { reflected: false });
                 self.shutdown_state = Some(ShutdownState::Complete);
             }
             TxNotification::PeerShutdownComplete => {
@@ -354,7 +355,8 @@ impl AssociationTx {
                     if self.resend_queue.is_empty() && self.out_queue.is_empty() {
                         // TODO set retransmit timer for this
                         self.shutdown_state = Some(ShutdownState::ShutdownSent);
-                        Some(Chunk::ShutDown)
+                        // TODO monitor sacks we send so we know which tsn we have sen last
+                        Some(Chunk::ShutDown(Tsn(0)))
                     } else {
                         None
                     }
@@ -368,7 +370,7 @@ impl AssociationTx {
                         None
                     }
                 }
-                _ => None
+                _ => None,
             }
         }
     }

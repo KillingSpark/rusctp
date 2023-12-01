@@ -105,15 +105,20 @@ pub enum Chunk {
     SAck(sack::SelectiveAck),
     HeartBeat(Bytes),
     HeartBeatAck(Bytes),
-    Abort,
-    ShutDown,
+    Abort {
+        reflected: bool,
+        error_causes: Bytes,
+    },
+    ShutDown(Tsn),
     ShutDownAck,
     OpError,
     StateCookie(cookie::StateCookie),
     StateCookieAck,
     _ReservedECNE,
     _ReservedCWR,
-    ShutDownComplete,
+    ShutDownComplete {
+        reflected: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -351,9 +356,23 @@ impl Chunk {
             }
             CHUNK_HEARTBEAT => Chunk::HeartBeat(value),
             CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck(value),
-            CHUNK_ABORT => Chunk::Abort,
-            CHUNK_SHUTDOWN => Chunk::ShutDown,
-            CHUNK_SHUTDOWN_ACK => Chunk::ShutDownAck,
+            CHUNK_ABORT => Chunk::Abort {
+                reflected: flags & 0x1 == 1,
+                error_causes: value,
+            },
+            CHUNK_SHUTDOWN => {
+                if value.len() != 4 {
+                    return (padded_len, Err(ParseError::IllegalFormat));
+                }
+                let mut value = value;
+                Chunk::ShutDown(Tsn(value.get_u32()))
+            }
+            CHUNK_SHUTDOWN_ACK => {
+                if !value.is_empty() {
+                    return (padded_len, Err(ParseError::IllegalFormat));
+                }
+                Chunk::ShutDownAck
+            }
             CHUNK_OP_ERROR => Chunk::OpError,
             CHUNK_STATE_COOKIE => Chunk::StateCookie(StateCookie::Opaque(value)),
             CHUNK_STATE_COOKIE_ACK => {
@@ -364,7 +383,14 @@ impl Chunk {
             }
             CHUNK_RESERVED_ECNE => Chunk::_ReservedECNE,
             CHUNK_RESERVED_CWR => Chunk::_ReservedCWR,
-            CHUNK_SHUTDOWN_COMPLETE => Chunk::ShutDownComplete,
+            CHUNK_SHUTDOWN_COMPLETE => {
+                if !value.is_empty() {
+                    return (padded_len, Err(ParseError::IllegalFormat));
+                }
+                Chunk::ShutDownComplete {
+                    reflected: flags & 0x1 == 1,
+                }
+            }
             _ => return (padded_len, Err(parse_error(typ))),
         };
         (padded_len, Ok(chunk))
@@ -403,6 +429,35 @@ impl Chunk {
                 buf.put_slice(data);
                 // maybe padding is needed
                 buf.put_bytes(0, padding_needed(size));
+            }
+            Chunk::Abort {
+                reflected,
+                error_causes,
+            } => {
+                buf.put_u8(CHUNK_ABORT);
+                buf.put_u8(if *reflected { 0x1 } else { 0x0 });
+                let size = CHUNK_HEADER_SIZE + error_causes.len();
+                buf.put_u16(size as u16);
+                buf.put_slice(&error_causes);
+            }
+            Chunk::ShutDown(cum_tsn) => {
+                buf.put_u8(CHUNK_SHUTDOWN);
+                buf.put_u8(0);
+                let size = 4 + CHUNK_HEADER_SIZE;
+                buf.put_u16(size as u16);
+                buf.put_u32(cum_tsn.0);
+            }
+            Chunk::ShutDownAck => {
+                buf.put_u8(CHUNK_SHUTDOWN_ACK);
+                buf.put_u8(0);
+                let size = CHUNK_HEADER_SIZE;
+                buf.put_u16(size as u16);
+            }
+            Chunk::ShutDownComplete { reflected } => {
+                buf.put_u8(CHUNK_SHUTDOWN_COMPLETE);
+                buf.put_u8(if *reflected { 0x1 } else { 0x0 });
+                let size = CHUNK_HEADER_SIZE;
+                buf.put_u16(size as u16);
             }
             _ => {
                 #[cfg(not(feature = "fuzz"))]
