@@ -71,6 +71,9 @@ pub enum ShutdownState {
 
 impl ShutdownState {
     pub fn is_completely_shutdown(this: Option<&Self>) -> bool {
-        matches!(this, Some(ShutdownState::Complete) | Some(ShutdownState::AbortReceived))
+        matches!(
+            this,
+            Some(ShutdownState::Complete) | Some(ShutdownState::AbortReceived)
+        )
     }
 }
