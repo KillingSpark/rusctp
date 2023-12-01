@@ -8,7 +8,7 @@ use crate::packet::sack::SelectiveAck;
 use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk};
 
-use super::TxNotification;
+use super::{ShutdownState, TxNotification};
 pub struct AssociationRx {
     id: AssocId,
 
@@ -23,7 +23,7 @@ pub struct AssociationRx {
     in_buffer_limit: usize,
     current_in_buffer: usize,
 
-    closed: bool,
+    shutdown_state: Option<ShutdownState>,
 }
 
 struct PerStreamInfo {
@@ -78,7 +78,7 @@ impl AssociationRx {
             in_buffer_limit,
             current_in_buffer: 0,
 
-            closed: false,
+            shutdown_state: None,
         }
     }
 
@@ -109,14 +109,35 @@ impl AssociationRx {
                 .tx_notifications
                 .push_back(TxNotification::SAck((sack, now))),
             Chunk::Abort => {
-                self.closed = true;
+                self.shutdown_state = Some(ShutdownState::AbortReceived);
                 self.tx_notifications.push_back(TxNotification::Abort)
+            }
+            Chunk::ShutDown => {
+                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                self.tx_notifications
+                    .push_back(TxNotification::PeerShutdown);
+            }
+            Chunk::ShutDownAck => {
+                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                self.tx_notifications
+                    .push_back(TxNotification::PeerShutdownAck);
+            }
+            Chunk::ShutDownComplete => {
+                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                self.tx_notifications
+                    .push_back(TxNotification::PeerShutdownComplete);
             }
             _ => {
                 todo!()
             }
         }
         None
+    }
+
+    pub fn shutdown_complete(&self) -> bool {
+        ShutdownState::is_completely_shutdown(self.shutdown_state.as_ref())
+        // TODO this should only count the bytes in the stream queues, unordered packets will not be delivered
+            && self.current_in_buffer == 0
     }
 
     fn queue_ack(&mut self) {
@@ -146,7 +167,6 @@ impl AssociationRx {
             //eprintln!("CumTsn {:?} Gap blocks: {:?}", self.tsn_counter, blocks);
         }
 
-        // TODO send tsn gap blocks
         self.tx_notifications
             .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
                 cum_tsn: self.tsn_counter,
@@ -211,7 +231,7 @@ impl AssociationRx {
     }
 
     pub fn poll_data(&mut self, stream_id: u16) -> PollDataResult {
-        if self.closed {
+        if self.shutdown_complete() {
             PollDataResult::Error(PollDataError::Closed)
         } else {
             if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
@@ -221,17 +241,19 @@ impl AssociationRx {
                         let (_, data) = stream_info.queue.pop_first().unwrap();
                         self.current_in_buffer -= data.buf.len();
 
-                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+                        if self.shutdown_state.is_none() {
+                            let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
 
-                        if a_rwnd >= self.last_sent_arwnd * 2 {
-                            self.last_sent_arwnd = a_rwnd;
-                            self.tx_notifications
-                                .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                    cum_tsn: self.tsn_counter,
-                                    a_rwnd,
-                                    blocks: vec![],
-                                    duplicated_tsn: vec![],
-                                })));
+                            if a_rwnd >= self.last_sent_arwnd * 2 {
+                                self.last_sent_arwnd = a_rwnd;
+                                self.tx_notifications
+                                    .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                                        cum_tsn: self.tsn_counter,
+                                        a_rwnd,
+                                        blocks: vec![],
+                                        duplicated_tsn: vec![],
+                                    })));
+                            }
                         }
 
                         return PollDataResult::Data(data.buf);

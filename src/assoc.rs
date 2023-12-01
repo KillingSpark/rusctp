@@ -59,3 +59,18 @@ impl Association {
         &mut self.rx
     }
 }
+
+pub enum ShutdownState {
+    TryingTo,
+    ShutdownSent,
+    ShutdownReceived,
+    ShutdownAckSent,
+    Complete,
+    AbortReceived,
+}
+
+impl ShutdownState {
+    pub fn is_completely_shutdown(this: Option<&Self>) -> bool {
+        matches!(this, Some(ShutdownState::Complete) | Some(ShutdownState::AbortReceived))
+    }
+}

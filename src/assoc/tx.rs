@@ -6,6 +6,7 @@ use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk, Packet, TransportAddress};
 use bytes::{Buf, Bytes};
 
+use super::ShutdownState;
 use super::srtt::Srtt;
 
 mod congestion;
@@ -41,7 +42,7 @@ pub struct AssociationTx {
     timer_ctr: u64,
     rto_timer: Option<Timer>,
 
-    peer_closed: bool,
+    shutdown_state: Option<ShutdownState>,
 }
 
 struct ResendEntry {
@@ -76,6 +77,10 @@ pub enum TxNotification {
     Send(Chunk),
     SAck((SelectiveAck, Instant)),
     Abort,
+    Shutdown,
+    PeerShutdown,
+    PeerShutdownAck,
+    PeerShutdownComplete,
     _PrimaryPathChanged(TransportAddress),
 }
 
@@ -105,7 +110,7 @@ impl Timer {
 
 #[derive(Debug)]
 pub enum SendErrorKind {
-    PeerClosed,
+    Closed,
     BufferFull,
     UnknownStream,
 }
@@ -158,7 +163,7 @@ impl AssociationTx {
             srtt: Srtt::new(),
             rto_timer: None,
             timer_ctr: 0,
-            peer_closed: false,
+            shutdown_state: None,
         }
     }
 
@@ -172,8 +177,27 @@ impl AssociationTx {
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
             TxNotification::SAck((sack, recv_at)) => self.handle_sack(sack, recv_at),
-            TxNotification::Abort => { /* TODO */ }
+            TxNotification::Abort => {
+                self.shutdown_state = Some(ShutdownState::AbortReceived);
+            }
+            TxNotification::Shutdown => {
+                self.shutdown_state = Some(ShutdownState::TryingTo);
+            }
+            TxNotification::PeerShutdown => {
+                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+            }
+            TxNotification::PeerShutdownAck => {
+                self.send_next.push_back(Chunk::ShutDownComplete);
+                self.shutdown_state = Some(ShutdownState::Complete);
+            }
+            TxNotification::PeerShutdownComplete => {
+                self.shutdown_state = Some(ShutdownState::Complete);
+            }
         }
+    }
+
+    pub fn shutdown_complete(&self) -> bool {
+        ShutdownState::is_completely_shutdown(self.shutdown_state.as_ref())
     }
 
     fn process_sack_gap_blocks(
@@ -275,10 +299,10 @@ impl AssociationTx {
         immediate: bool,
         unordered: bool,
     ) -> Result<(), SendError> {
-        if self.peer_closed {
+        if self.shutdown_state.is_some() {
             return Err(SendError {
                 data,
-                kind: SendErrorKind::PeerClosed,
+                kind: SendErrorKind::Closed,
             });
         }
         let Some(stream_info) = self.per_stream.get_mut(stream as usize) else {
@@ -322,9 +346,30 @@ impl AssociationTx {
     // Collect next chunk if it would still fit inside the limit
     pub fn poll_signal_to_send(&mut self, limit: usize) -> Option<Chunk> {
         if self.send_next.front()?.serialized_size() < limit {
+            // TODO if this is a sack prepend a shutdown
             self.send_next.pop_front()
         } else {
-            None
+            match self.shutdown_state {
+                Some(ShutdownState::TryingTo) => {
+                    if self.resend_queue.is_empty() && self.out_queue.is_empty() {
+                        // TODO set retransmit timer for this
+                        self.shutdown_state = Some(ShutdownState::ShutdownSent);
+                        Some(Chunk::ShutDown)
+                    } else {
+                        None
+                    }
+                }
+                Some(ShutdownState::ShutdownReceived) => {
+                    if self.resend_queue.is_empty() && self.out_queue.is_empty() {
+                        // TODO set retransmit timer for this
+                        self.shutdown_state = Some(ShutdownState::ShutdownAckSent);
+                        Some(Chunk::ShutDownAck)
+                    } else {
+                        None
+                    }
+                }
+                _ => None
+            }
         }
     }
 
