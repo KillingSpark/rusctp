@@ -439,6 +439,8 @@ impl Chunk {
                 let size = CHUNK_HEADER_SIZE + error_causes.len();
                 buf.put_u16(size as u16);
                 buf.put_slice(&error_causes);
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
             }
             Chunk::ShutDown(cum_tsn) => {
                 buf.put_u8(CHUNK_SHUTDOWN);
