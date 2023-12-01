@@ -476,6 +476,13 @@ impl Chunk {
             Chunk::SAck(sack) => sack.serialized_size(),
             Chunk::HeartBeat(data) => CHUNK_HEADER_SIZE + data.len(),
             Chunk::HeartBeatAck(data) => CHUNK_HEADER_SIZE + data.len(),
+            Chunk::Abort {
+                reflected: _,
+                error_causes,
+            } => CHUNK_HEADER_SIZE + error_causes.len(),
+            Chunk::ShutDown(_) => CHUNK_HEADER_SIZE + 4,
+            Chunk::ShutDownAck => CHUNK_HEADER_SIZE,
+            Chunk::ShutDownComplete { reflected: _ } => CHUNK_HEADER_SIZE,
             _ => {
                 #[cfg(not(feature = "fuzz"))]
                 unimplemented!();
