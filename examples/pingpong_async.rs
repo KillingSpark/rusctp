@@ -8,7 +8,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
     assoc_async::assoc::Sctp,
     packet::{Chunk, Packet},
-    Settings,
+    FakeAddr, Settings,
 };
 use tokio::net::UdpSocket;
 
@@ -30,7 +30,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         .enable_time()
         .build()
         .unwrap();
-    let fake_addr = rusctp::TransportAddress::Fake(100);
+    let fake_addr = rusctp::TransportAddress::Fake(100u64);
 
     runtime.spawn(async move {
         let sctp = Arc::new(Sctp::new(Settings {
@@ -109,7 +109,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         .build()
         .unwrap();
 
-    let fake_addr = rusctp::TransportAddress::Fake(200);
+    let fake_addr = rusctp::TransportAddress::Fake(200u64);
 
     runtime.spawn(async move {
         let sctp = Arc::new(Sctp::new(Settings {
@@ -176,7 +176,11 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
     runtime
 }
 
-async fn send_to(socket: &UdpSocket, packet: Packet, chunk: Chunk) -> Result<(), tokio::io::Error> {
+async fn send_to<F: FakeAddr>(
+    socket: &UdpSocket,
+    packet: Packet,
+    chunk: Chunk<F>,
+) -> Result<(), tokio::io::Error> {
     let mut chunkbuf = BytesMut::new();
     chunk.serialize(&mut chunkbuf);
     let chunkbuf = chunkbuf.freeze();

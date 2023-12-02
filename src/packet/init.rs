@@ -7,13 +7,13 @@ use crate::{
         cookie::{self},
         SupportedAddrTypes, UnrecognizedParam,
     },
-    TransportAddress,
+    FakeAddr, TransportAddress,
 };
 
 use super::param::{padded_len, padding_needed, Param, ParseError, PARAM_HEADER_SIZE};
 
 #[derive(PartialEq, Debug)]
-pub struct InitChunk {
+pub struct InitChunk<FakeContent: FakeAddr> {
     pub initiate_tag: u32,
     pub a_rwnd: u32,
     pub outbound_streams: u16,
@@ -23,12 +23,12 @@ pub struct InitChunk {
     pub unrecognized: Vec<UnrecognizedParam>,
 
     // Optional
-    pub aliases: Vec<TransportAddress>,
+    pub aliases: Vec<TransportAddress<FakeContent>>,
     pub cookie_preservative: Option<Duration>,
     pub supported_addr_types: Option<SupportedAddrTypes>,
 }
 
-impl InitChunk {
+impl<FakeContent: FakeAddr> InitChunk<FakeContent> {
     pub fn parse(mut data: Bytes) -> Option<Self> {
         if data.len() < 16 {
             return None;
@@ -55,7 +55,7 @@ impl InitChunk {
         };
 
         while !data.is_empty() {
-            let (size, param) = Param::parse(&data);
+            let (size, param) = Param::<FakeContent>::parse(&data);
             data.advance(size);
             match param {
                 Ok(param) => match param {
@@ -109,20 +109,22 @@ impl InitChunk {
             match alias {
                 TransportAddress::Fake(_) => {}
                 TransportAddress::IpV4(addr) => {
-                    size += padded_len(Param::IpV4Addr(*addr).serialized_size())
+                    size += padded_len(Param::<FakeContent>::IpV4Addr(*addr).serialized_size())
                 }
                 TransportAddress::IpV6(addr) => {
-                    size += padded_len(Param::IpV6Addr(*addr).serialized_size())
+                    size += padded_len(Param::<FakeContent>::IpV6Addr(*addr).serialized_size())
                 }
             }
         }
 
         if let Some(duration) = self.cookie_preservative {
-            size += padded_len(Param::CookiePreservative(duration).serialized_size());
+            size +=
+                padded_len(Param::<FakeContent>::CookiePreservative(duration).serialized_size());
         }
 
         if let Some(suppoert) = self.supported_addr_types {
-            size += padded_len(Param::SupportedAddrTypes(suppoert).serialized_size());
+            size +=
+                padded_len(Param::<FakeContent>::SupportedAddrTypes(suppoert).serialized_size());
         }
 
         size
@@ -145,17 +147,21 @@ impl InitChunk {
         for alias in &self.aliases {
             match alias {
                 TransportAddress::Fake(_) => {}
-                TransportAddress::IpV4(addr) => Param::IpV4Addr(*addr).serialize(buf),
-                TransportAddress::IpV6(addr) => Param::IpV6Addr(*addr).serialize(buf),
+                TransportAddress::IpV4(addr) => {
+                    Param::<FakeContent>::IpV4Addr(*addr).serialize(buf)
+                }
+                TransportAddress::IpV6(addr) => {
+                    Param::<FakeContent>::IpV6Addr(*addr).serialize(buf)
+                }
             }
         }
 
         if let Some(duration) = self.cookie_preservative {
-            Param::CookiePreservative(duration).serialize(buf);
+            Param::<FakeContent>::CookiePreservative(duration).serialize(buf);
         }
 
         if let Some(suppoert) = self.supported_addr_types {
-            Param::SupportedAddrTypes(suppoert).serialize(buf);
+            Param::<FakeContent>::SupportedAddrTypes(suppoert).serialize(buf);
         }
 
         // maybe padding is needed
@@ -164,22 +170,22 @@ impl InitChunk {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct InitAck {
+pub struct InitAck<FakeContent: FakeAddr> {
     pub initiate_tag: u32,
     pub a_rwnd: u32,
     pub outbound_streams: u16,
     pub inbound_streams: u16,
     pub initial_tsn: u32,
-    pub cookie: cookie::StateCookie,
+    pub cookie: cookie::StateCookie<FakeContent>,
 
     // Optional
     pub unrecognized: Vec<UnrecognizedParam>,
-    pub aliases: Vec<TransportAddress>,
+    pub aliases: Vec<TransportAddress<FakeContent>>,
     pub cookie_preservative: Option<Duration>,
     pub supported_addr_types: Option<SupportedAddrTypes>,
 }
 
-impl InitAck {
+impl<FakeContent: FakeAddr> InitAck<FakeContent> {
     pub fn parse(mut data: Bytes) -> Option<Self> {
         if data.len() < 16 {
             return None;
@@ -269,20 +275,21 @@ impl InitAck {
             match alias {
                 TransportAddress::Fake(_) => {}
                 TransportAddress::IpV4(addr) => {
-                    size += padded_len(Param::IpV4Addr(*addr).serialized_size())
+                    size += padded_len(Param::<FakeContent>::IpV4Addr(*addr).serialized_size())
                 }
                 TransportAddress::IpV6(addr) => {
-                    size += padded_len(Param::IpV6Addr(*addr).serialized_size())
+                    size += padded_len(Param::<FakeContent>::IpV6Addr(*addr).serialized_size())
                 }
             }
         }
 
         if let Some(duration) = self.cookie_preservative {
-            size += padded_len(Param::CookiePreservative(duration).serialized_size());
+            size +=
+                padded_len(Param::<FakeContent>::CookiePreservative(duration).serialized_size());
         }
 
         if let Some(support) = self.supported_addr_types {
-            size += padded_len(Param::SupportedAddrTypes(support).serialized_size());
+            size += padded_len(Param::<FakeContent>::SupportedAddrTypes(support).serialized_size());
         }
 
         for unrecognized in &self.unrecognized {
@@ -312,8 +319,12 @@ impl InitAck {
         for alias in &self.aliases {
             match alias {
                 TransportAddress::Fake(_) => {}
-                TransportAddress::IpV4(addr) => Param::IpV4Addr(*addr).serialize(buf),
-                TransportAddress::IpV6(addr) => Param::IpV6Addr(*addr).serialize(buf),
+                TransportAddress::IpV4(addr) => {
+                    Param::<FakeContent>::IpV4Addr(*addr).serialize(buf)
+                }
+                TransportAddress::IpV6(addr) => {
+                    Param::<FakeContent>::IpV6Addr(*addr).serialize(buf)
+                }
             }
         }
 
@@ -322,11 +333,11 @@ impl InitAck {
         }
 
         if let Some(duration) = self.cookie_preservative {
-            Param::CookiePreservative(duration).serialize(buf);
+            Param::<FakeContent>::CookiePreservative(duration).serialize(buf);
         }
 
         if let Some(suppoert) = self.supported_addr_types {
-            Param::SupportedAddrTypes(suppoert).serialize(buf);
+            Param::<FakeContent>::SupportedAddrTypes(suppoert).serialize(buf);
         }
 
         // maybe padding is needed

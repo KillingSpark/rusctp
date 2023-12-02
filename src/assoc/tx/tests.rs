@@ -24,7 +24,7 @@ fn buffer_limits() {
             pmtu: 10000,
         },
     );
-    let send_ten_bytes = |tx: &mut AssociationTx| {
+    let send_ten_bytes = |tx: &mut AssociationTx<u64>| {
         tx.try_send_data(
             Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
             0,
@@ -136,7 +136,7 @@ fn arwnd_limits() {
             pmtu: 10000,
         },
     );
-    let send_ten_bytes = |tx: &mut AssociationTx| {
+    let send_ten_bytes = |tx: &mut AssociationTx<u64>| {
         tx.try_send_data(
             Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
             0,
@@ -195,7 +195,7 @@ fn rto_timeout() {
             pmtu: 10000,
         },
     );
-    let send_ten_bytes = |tx: &mut AssociationTx| {
+    let send_ten_bytes = |tx: &mut AssociationTx<u64>| {
         tx.try_send_data(
             Bytes::copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
             0,

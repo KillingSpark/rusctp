@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use crate::FakeAddr;
+
 use self::{
     cookie::StateCookie,
     data::DataChunk,
@@ -98,10 +100,10 @@ impl Packet {
 }
 
 #[derive(PartialEq, Debug)]
-pub enum Chunk {
+pub enum Chunk<FakeContent: FakeAddr> {
     Data(DataChunk),
-    Init(init::InitChunk),
-    InitAck(init::InitAck),
+    Init(init::InitChunk<FakeContent>),
+    InitAck(init::InitAck<FakeContent>),
     SAck(sack::SelectiveAck),
     HeartBeat(Bytes),
     HeartBeatAck(Bytes),
@@ -112,7 +114,7 @@ pub enum Chunk {
     ShutDown(Tsn),
     ShutDownAck,
     OpError,
-    StateCookie(cookie::StateCookie),
+    StateCookie(cookie::StateCookie<FakeContent>),
     StateCookieAck,
     _ReservedECNE,
     _ReservedCWR,
@@ -277,7 +279,7 @@ pub(crate) const CHUNK_RESERVED_CWR: u8 = 13;
 pub(crate) const CHUNK_SHUTDOWN_COMPLETE: u8 = 14;
 
 const CHUNK_HEADER_SIZE: usize = 4;
-impl Chunk {
+impl<FakeContent: FakeAddr> Chunk<FakeContent> {
     pub fn is_init(data: &[u8]) -> bool {
         if data.len() < CHUNK_HEADER_SIZE {
             false
@@ -529,7 +531,7 @@ fn roundtrip() {
     use crate::TransportAddress;
     use std::time::Duration;
 
-    fn roundtrip(chunk: Chunk) {
+    fn roundtrip(chunk: Chunk<u64>) {
         let mut buf = bytes::BytesMut::new();
         chunk.serialize(&mut buf);
         assert_eq!(buf.len(), padded_len(chunk.serialized_size()));

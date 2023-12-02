@@ -5,6 +5,7 @@ use bytes::Buf;
 use bytes::BufMut;
 use bytes::Bytes;
 
+use crate::FakeAddr;
 use crate::TransportAddress;
 
 use super::param::padding_needed;
@@ -12,18 +13,18 @@ use super::param::PARAM_HEADER_SIZE;
 use super::param::PARAM_STATE_COOKIE;
 
 #[derive(PartialEq, Debug)]
-pub enum StateCookie {
-    Ours(Cookie),
+pub enum StateCookie<FakeContent: FakeAddr> {
+    Ours(Cookie<FakeContent>),
     Opaque(Bytes),
 }
 
 #[derive(PartialEq, Debug)]
-pub struct Cookie {
+pub struct Cookie<FakeContent: FakeAddr> {
     pub mac: u64,
-    pub init_address: TransportAddress,
+    pub init_address: TransportAddress<FakeContent>,
     pub peer_port: u16,
     pub local_port: u16,
-    pub aliases: Vec<TransportAddress>,
+    pub aliases: Vec<TransportAddress<FakeContent>>,
     pub local_verification_tag: u32,
     pub peer_verification_tag: u32,
     pub local_initial_tsn: u32,
@@ -33,7 +34,7 @@ pub struct Cookie {
     pub peer_arwnd: u32,
 }
 
-impl StateCookie {
+impl<FakeContent: FakeAddr> StateCookie<FakeContent> {
     pub fn parse(data: Bytes) -> Self {
         Self::Opaque(data)
     }
@@ -61,7 +62,7 @@ impl StateCookie {
         }
     }
 
-    pub fn make_ours(&mut self) -> Option<&Cookie> {
+    pub fn make_ours(&mut self) -> Option<&Cookie<FakeContent>> {
         match self {
             Self::Ours(cookie) => Some(cookie),
             Self::Opaque(data) => {
@@ -72,7 +73,7 @@ impl StateCookie {
     }
 }
 
-impl Cookie {
+impl<FakeContent: FakeAddr> Cookie<FakeContent> {
     pub fn calc_mac(&self, local_secret: &[u8]) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
 
@@ -110,9 +111,9 @@ impl Cookie {
         let mut size = 4 + 4 + 4 + 4 + 2 + 2 + 8 + 2 + 2 + 4;
 
         match self.init_address {
-            TransportAddress::Fake(_) => {
+            TransportAddress::Fake(addr) => {
                 size += 1;
-                size += 8;
+                size += addr.serialized_size();
             }
             TransportAddress::IpV4(_) => {
                 size += 1;
@@ -126,10 +127,7 @@ impl Cookie {
 
         for addr in &self.aliases {
             match addr {
-                TransportAddress::Fake(_) => {
-                    size += 1;
-                    size += 8;
-                }
+                TransportAddress::Fake(_) => {}
                 TransportAddress::IpV4(_) => {
                     size += 1;
                     size += 4;
@@ -173,7 +171,7 @@ impl Cookie {
         match init_address {
             TransportAddress::Fake(addr) => {
                 buf.put_u8(0);
-                buf.put_u64(*addr);
+                addr.serialize(buf);
             }
             TransportAddress::IpV4(addr) => {
                 buf.put_u8(1);
@@ -187,10 +185,7 @@ impl Cookie {
 
         for addr in aliases {
             match addr {
-                TransportAddress::Fake(addr) => {
-                    buf.put_u8(0);
-                    buf.put_u64(*addr);
-                }
+                TransportAddress::Fake(_) => {}
                 TransportAddress::IpV4(addr) => {
                     buf.put_u8(1);
                     buf.put_u32((*addr).into());
@@ -221,12 +216,7 @@ impl Cookie {
         let mut aliases = vec![];
 
         let init_address = match data.get_u8() {
-            0 => {
-                if data.remaining() < 8 {
-                    return None;
-                }
-                TransportAddress::Fake(data.get_u64())
-            }
+            0 => TransportAddress::Fake(FakeContent::parse(&mut data).ok()?),
             1 => {
                 if data.remaining() < 4 {
                     return None;
@@ -246,12 +236,6 @@ impl Cookie {
 
         while data.remaining() > 5 {
             match data.get_u8() {
-                0 => {
-                    if data.remaining() < 8 {
-                        return None;
-                    }
-                    aliases.push(TransportAddress::Fake(data.get_u64()));
-                }
                 1 => {
                     if data.remaining() < 4 {
                         return None;
@@ -293,7 +277,7 @@ fn roundtrip() {
 
     let cookie = Cookie {
         mac: 0,
-        init_address: TransportAddress::Fake(12345),
+        init_address: TransportAddress::Fake(12345u64),
         peer_port: 12334,
         local_port: 12335,
         aliases: vec![

@@ -5,12 +5,14 @@ use std::{
 
 use bytes::{Buf, BufMut, Bytes};
 
+use crate::FakeAddr;
+
 use super::{cookie::StateCookie, SupportedAddrTypes, UnrecognizedParam};
 
 #[derive(PartialEq, Debug)]
-pub enum Param {
+pub enum Param<FakeContent: FakeAddr> {
     Unrecognized(UnrecognizedParam),
-    StateCookie(StateCookie),
+    StateCookie(StateCookie<FakeContent>),
     CookiePreservative(Duration),
     IpV4Addr(Ipv4Addr),
     IpV6Addr(Ipv6Addr),
@@ -40,7 +42,7 @@ pub enum ParseError {
 
 pub(crate) const PARAM_HEADER_SIZE: usize = 4;
 
-impl Param {
+impl<FakeContent: FakeAddr> Param<FakeContent> {
     pub(crate) fn parse(data: &Bytes) -> (usize, Result<Self, ParseError>) {
         if data.len() < PARAM_HEADER_SIZE {
             return (data.len(), Err(ParseError::Done));
@@ -213,7 +215,7 @@ fn parse_error(typ: u16, data: Bytes) -> ParseError {
 fn roundtrip() {
     use crate::{packet::cookie::Cookie, TransportAddress};
 
-    fn roundtrip(param: Param) {
+    fn roundtrip(param: Param<u64>) {
         let mut buf = bytes::BytesMut::new();
         param.serialize(&mut buf);
         assert_eq!(buf.len(), padded_len(param.serialized_size()));

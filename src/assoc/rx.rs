@@ -6,13 +6,13 @@ use bytes::Bytes;
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
 use crate::packet::{Sequence, Tsn};
-use crate::{AssocId, Chunk};
+use crate::{AssocId, Chunk, FakeAddr};
 
 use super::{ShutdownState, TxNotification};
-pub struct AssociationRx {
+pub struct AssociationRx<FakeContent: FakeAddr> {
     id: AssocId,
 
-    tx_notifications: VecDeque<TxNotification>,
+    tx_notifications: VecDeque<TxNotification<FakeContent>>,
 
     tsn_counter: Tsn,
     last_sent_arwnd: u32,
@@ -31,11 +31,11 @@ struct PerStreamInfo {
     queue: BTreeMap<Sequence, DataChunk>,
 }
 
-pub enum RxNotification {
-    Chunk(Chunk),
+pub enum RxNotification<FakeContent: FakeAddr> {
+    Chunk(Chunk<FakeContent>),
 }
 
-impl RxNotification {
+impl<FakeContent: FakeAddr> RxNotification<FakeContent> {
     pub fn get_stream_id(&self) -> Option<u16> {
         if let Self::Chunk(Chunk::Data(data)) = self {
             Some(data.stream_id)
@@ -57,7 +57,7 @@ pub enum PollDataError {
     Closed,
 }
 
-impl AssociationRx {
+impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     pub(crate) fn new(id: AssocId, init_tsn: Tsn, in_streams: u16, in_buffer_limit: usize) -> Self {
         Self {
             id,
@@ -86,19 +86,23 @@ impl AssociationRx {
         self.id
     }
 
-    pub fn notification(&mut self, notification: RxNotification, now: std::time::Instant) {
+    pub fn notification(
+        &mut self,
+        notification: RxNotification<FakeContent>,
+        now: std::time::Instant,
+    ) {
         match notification {
             RxNotification::Chunk(chunk) => self.handle_chunk(chunk, now),
         };
     }
 
-    pub fn tx_notifications(&mut self) -> impl Iterator<Item = TxNotification> + '_ {
+    pub fn tx_notifications(&mut self) -> impl Iterator<Item = TxNotification<FakeContent>> + '_ {
         self.tx_notifications.drain(..)
     }
 
     fn handle_chunk(
         &mut self,
-        chunk: Chunk,
+        chunk: Chunk<FakeContent>,
         now: std::time::Instant,
     ) -> Option<std::time::Instant> {
         match chunk {

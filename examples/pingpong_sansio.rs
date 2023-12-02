@@ -10,14 +10,14 @@ use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
     assoc::{Association, AssociationTx, PollDataResult, Timer},
     packet::{Chunk, Packet},
-    AssocId, Sctp, Settings, TransportAddress,
+    AssocId, FakeAddr, Sctp, Settings, TransportAddress,
 };
 
-struct Context {
-    sctp: Sctp,
-    assocs: HashMap<AssocId, Association>,
-    addrs: HashMap<TransportAddress, SocketAddr>,
-    known_addrs: HashMap<SocketAddr, TransportAddress>,
+struct Context<FakeContent: FakeAddr> {
+    sctp: Sctp<FakeContent>,
+    assocs: HashMap<AssocId, Association<FakeContent>>,
+    addrs: HashMap<TransportAddress<FakeContent>, SocketAddr>,
+    known_addrs: HashMap<SocketAddr, TransportAddress<FakeContent>>,
     socket: UdpSocket,
     timeouts: BinaryHeap<Timeout>,
     logname: String,
@@ -74,7 +74,7 @@ fn main() {
 
         server_ctx.known_addrs.insert(
             SocketAddr::from_str(client_addr).unwrap(),
-            TransportAddress::Fake(1),
+            TransportAddress::Fake(1u64),
         );
         server_ctx.addrs.insert(
             TransportAddress::Fake(1),
@@ -103,7 +103,7 @@ fn main() {
 
         client_ctx.known_addrs.insert(
             SocketAddr::from_str(server_addr).unwrap(),
-            TransportAddress::Fake(2),
+            TransportAddress::Fake(2u64),
         );
         client_ctx.addrs.insert(
             TransportAddress::Fake(2),
@@ -119,7 +119,7 @@ fn main() {
     jclient.join().unwrap();
 }
 
-impl Context {
+impl<FakeContent: FakeAddr> Context<FakeContent> {
     fn run(&mut self) {
         let mut buf = [0u8; 1024 * 8];
         'outer: loop {
@@ -213,13 +213,17 @@ impl Context {
         }
     }
 
-    fn send_everything(tx: &mut AssociationTx, addr: SocketAddr, socket: &mut UdpSocket) {
+    fn send_everything(
+        tx: &mut AssociationTx<FakeContent>,
+        addr: SocketAddr,
+        socket: &mut UdpSocket,
+    ) {
         let packet = tx.packet_header();
         while let Some(signal) = tx.poll_signal_to_send(1024) {
             send_to(socket, addr, packet, signal);
         }
         while let Some(data) = tx.poll_data_to_send(1024, Instant::now()) {
-            send_to(socket, addr, packet, Chunk::Data(data));
+            send_to(socket, addr, packet, Chunk::<FakeContent>::Data(data));
         }
     }
 
@@ -247,7 +251,12 @@ impl Context {
     }
 }
 
-fn send_to(socket: &mut UdpSocket, from: SocketAddr, packet: Packet, chunk: Chunk) {
+fn send_to<FakeContent: FakeAddr>(
+    socket: &mut UdpSocket,
+    from: SocketAddr,
+    packet: Packet,
+    chunk: Chunk<FakeContent>,
+) {
     let mut chunkbuf = BytesMut::new();
     chunk.serialize(&mut chunkbuf);
     let chunkbuf = chunkbuf.freeze();

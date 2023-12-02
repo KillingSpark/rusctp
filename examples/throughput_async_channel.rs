@@ -7,7 +7,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
     assoc_async::assoc::{AssociationTx, Sctp},
     packet::{Chunk, Packet},
-    Settings,
+    FakeAddr, Settings,
 };
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -34,7 +34,7 @@ fn run_client(
         .enable_time()
         .build()
         .unwrap();
-    let fake_addr = rusctp::TransportAddress::Fake(100);
+    let fake_addr = rusctp::TransportAddress::Fake(100u64);
 
     runtime.spawn(async move {
         let sctp = Arc::new(Sctp::new(Settings {
@@ -121,7 +121,7 @@ fn run_server(
         .build()
         .unwrap();
 
-    let fake_addr = rusctp::TransportAddress::Fake(200);
+    let fake_addr = rusctp::TransportAddress::Fake(200u64);
 
     runtime.spawn(async move {
         let sctp = Arc::new(Sctp::new(Settings {
@@ -213,7 +213,10 @@ fn run_server(
     runtime
 }
 
-async fn collect_all_chunks(tx: &Arc<AssociationTx>, chunks: &mut impl BufMut) -> Packet {
+async fn collect_all_chunks<FakeContent: FakeAddr>(
+    tx: &Arc<AssociationTx<FakeContent>>,
+    chunks: &mut impl BufMut,
+) -> Packet {
     let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut()).await;
     chunk.serialize(chunks);
     while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()) {
@@ -235,10 +238,10 @@ async fn send_to(
     Ok(())
 }
 
-async fn send_chunk(
+async fn send_chunk<FakeContent: FakeAddr>(
     socket: &Sender<Bytes>,
     packet: Packet,
-    chunk: Chunk,
+    chunk: Chunk<FakeContent>,
 ) -> Result<(), tokio::io::Error> {
     let mut chunkbuf = BytesMut::new();
     chunk.serialize(&mut chunkbuf);

@@ -7,7 +7,7 @@ use crate::{
         init::{InitAck, InitChunk},
         Chunk, Packet, Tsn, UnrecognizedParam,
     },
-    AssocAlias, AssocId, PerAssocInfo, Sctp, TransportAddress, WaitInitAck,
+    AssocAlias, AssocId, FakeAddr, PerAssocInfo, Sctp, TransportAddress, WaitInitAck,
 };
 
 use super::{AssocTxSettings, Association, TxNotification};
@@ -29,10 +29,10 @@ impl<T> HandleSpecialResult<T> {
     }
 }
 
-impl Sctp {
+impl<FakeContent: FakeAddr> Sctp<FakeContent> {
     pub fn init_association(
         &mut self,
-        peer_addr: TransportAddress,
+        peer_addr: TransportAddress<FakeContent>,
         peer_port: u16,
         local_port: u16,
     ) {
@@ -58,7 +58,11 @@ impl Sctp {
             .push_back((peer_addr, packet, init_chunk))
     }
 
-    fn create_init_chunk(&mut self, local_verification_tag: u32, initial_tsn: u32) -> InitChunk {
+    fn create_init_chunk(
+        &mut self,
+        local_verification_tag: u32,
+        initial_tsn: u32,
+    ) -> InitChunk<FakeContent> {
         InitChunk {
             initiate_tag: local_verification_tag,
             a_rwnd: self.settings.in_buffer_limit as u32,
@@ -77,11 +81,12 @@ impl Sctp {
         &mut self,
         packet: &Packet,
         data: &mut Bytes,
-        from: TransportAddress,
+        from: TransportAddress<FakeContent>,
     ) -> HandleSpecialResult<()> {
-        if !Chunk::is_init_ack(data) {
+        if !Chunk::<FakeContent>::is_init_ack(data) {
             return HandleSpecialResult::NotRecognized;
         }
+
         let (size, Ok(Chunk::InitAck(init_ack))) = Chunk::parse(data) else {
             return HandleSpecialResult::Error;
         };
@@ -127,12 +132,12 @@ impl Sctp {
         &mut self,
         packet: &Packet,
         data: &mut Bytes,
-        from: TransportAddress,
+        from: TransportAddress<FakeContent>,
     ) -> HandleSpecialResult<AssocId> {
-        if !Chunk::is_cookie_ack(data) {
+        if !Chunk::<FakeContent>::is_cookie_ack(data) {
             return HandleSpecialResult::NotRecognized;
         }
-        let (size, Ok(Chunk::StateCookieAck)) = Chunk::parse(data) else {
+        let (size, Ok(Chunk::StateCookieAck)) = Chunk::<FakeContent>::parse(data) else {
             return HandleSpecialResult::Error;
         };
         data.advance(size);
@@ -181,9 +186,9 @@ impl Sctp {
         &mut self,
         packet: &Packet,
         data: &Bytes,
-        from: TransportAddress,
+        from: TransportAddress<FakeContent>,
     ) -> HandleSpecialResult<()> {
-        if !Chunk::is_init(data) {
+        if !Chunk::<FakeContent>::is_init(data) {
             return HandleSpecialResult::NotRecognized;
         }
         let (size, Ok(Chunk::Init(init))) = Chunk::parse(data) else {
@@ -245,10 +250,10 @@ impl Sctp {
     fn create_init_ack(
         &mut self,
         unrecognized: Vec<UnrecognizedParam>,
-        cookie: StateCookie,
+        cookie: StateCookie<FakeContent>,
         initial_tsn: u32,
         local_verification_tag: u32,
-    ) -> InitAck {
+    ) -> InitAck<FakeContent> {
         InitAck {
             initiate_tag: local_verification_tag,
             a_rwnd: self.settings.in_buffer_limit as u32,
@@ -267,9 +272,9 @@ impl Sctp {
         &mut self,
         packet: &Packet,
         data: &mut Bytes,
-        from: TransportAddress,
+        from: TransportAddress<FakeContent>,
     ) -> HandleSpecialResult<AssocId> {
-        if !Chunk::is_cookie_echo(data) {
+        if !Chunk::<FakeContent>::is_cookie_echo(data) {
             return HandleSpecialResult::NotRecognized;
         }
         let (size, Ok(Chunk::StateCookie(mut cookie))) = Chunk::parse(data) else {
@@ -326,11 +331,11 @@ impl Sctp {
     fn make_new_assoc(
         &mut self,
         packet: &Packet,
-        alias_addresses: &[TransportAddress],
+        alias_addresses: &[TransportAddress<FakeContent>],
         local_verification_tag: u32,
         peer_initial_tsn: u32,
         incoming_streams: u16,
-        tx_settings: AssocTxSettings,
+        tx_settings: AssocTxSettings<FakeContent>,
     ) -> AssocId {
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(

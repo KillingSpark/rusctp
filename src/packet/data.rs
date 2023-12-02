@@ -1,8 +1,10 @@
+use std::fmt::Debug;
+
 use bytes::{Buf, BufMut, Bytes};
 
 use super::{param::padding_needed, Sequence, Tsn, CHUNK_DATA};
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct DataChunk {
     pub tsn: Tsn,
     pub stream_id: u16,
@@ -14,6 +16,22 @@ pub struct DataChunk {
     pub unordered: bool,
     pub begin: bool,
     pub end: bool,
+}
+
+impl Debug for DataChunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DataChunk")
+            .field("tsn", &self.tsn)
+            .field("stream_id", &self.stream_id)
+            .field("stream_seq_num", &self.stream_seq_num)
+            .field("ppid", &self.ppid)
+            .field("buf", &self.buf.len())
+            .field("immediate", &self.immediate)
+            .field("unordered", &self.unordered)
+            .field("begin", &self.begin)
+            .field("end", &self.end)
+            .finish()
+    }
 }
 
 impl DataChunk {

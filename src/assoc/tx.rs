@@ -3,7 +3,7 @@ use std::{collections::VecDeque, time::Instant};
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
 use crate::packet::{Sequence, Tsn};
-use crate::{AssocId, Chunk, Packet, TransportAddress};
+use crate::{AssocId, Chunk, FakeAddr, Packet, TransportAddress};
 use bytes::{Buf, Bytes};
 
 use super::srtt::Srtt;
@@ -14,9 +14,9 @@ mod congestion;
 #[cfg(test)]
 mod tests;
 
-pub struct AssociationTx {
+pub struct AssociationTx<FakeContent: FakeAddr> {
     id: AssocId,
-    primary_path: TransportAddress,
+    primary_path: TransportAddress<FakeContent>,
     primary_congestion: congestion::PerDestinationInfo,
 
     peer_verification_tag: u32,
@@ -25,7 +25,7 @@ pub struct AssociationTx {
 
     out_queue: VecDeque<DataChunk>,
     resend_queue: VecDeque<ResendEntry>,
-    send_next: VecDeque<Chunk>,
+    send_next: VecDeque<Chunk<FakeContent>>,
 
     tsn_counter: Tsn,
     last_acked_tsn: Tsn,
@@ -73,19 +73,19 @@ struct PerStreamInfo {
 }
 
 #[derive(Debug)]
-pub enum TxNotification {
-    Send(Chunk),
+pub enum TxNotification<FakeContent: FakeAddr> {
+    Send(Chunk<FakeContent>),
     SAck((SelectiveAck, Instant)),
     Abort,
     Shutdown,
     PeerShutdown,
     PeerShutdownAck,
     PeerShutdownComplete,
-    _PrimaryPathChanged(TransportAddress),
+    _PrimaryPathChanged(TransportAddress<FakeContent>),
 }
 
-pub struct AssocTxSettings {
-    pub primary_path: TransportAddress,
+pub struct AssocTxSettings<FakeContent: FakeAddr> {
+    pub primary_path: TransportAddress<FakeContent>,
     pub peer_verification_tag: u32,
     pub local_port: u16,
     pub peer_port: u16,
@@ -121,8 +121,8 @@ pub struct SendError {
     pub kind: SendErrorKind,
 }
 
-impl AssociationTx {
-    pub(crate) fn new(id: AssocId, settings: AssocTxSettings) -> Self {
+impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
+    pub(crate) fn new(id: AssocId, settings: AssocTxSettings<FakeContent>) -> Self {
         let AssocTxSettings {
             primary_path,
             peer_verification_tag,
@@ -171,7 +171,11 @@ impl AssociationTx {
         self.id
     }
 
-    pub fn notification(&mut self, notification: TxNotification, _now: std::time::Instant) {
+    pub fn notification(
+        &mut self,
+        notification: TxNotification<FakeContent>,
+        _now: std::time::Instant,
+    ) {
         match notification {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
             TxNotification::Send(chunk) => self.send_next.push_back(chunk),
@@ -199,6 +203,10 @@ impl AssociationTx {
 
     pub fn shutdown_complete(&self) -> bool {
         ShutdownState::is_completely_shutdown(self.shutdown_state.as_ref())
+    }
+
+    pub fn initiate_shutdown(&mut self) {
+        self.shutdown_state = Some(ShutdownState::TryingTo)
     }
 
     fn process_sack_gap_blocks(
@@ -340,12 +348,12 @@ impl AssociationTx {
         Packet::new(self.local_port, self.peer_port, self.peer_verification_tag)
     }
 
-    pub fn primary_path(&self) -> TransportAddress {
+    pub fn primary_path(&self) -> TransportAddress<FakeContent> {
         self.primary_path
     }
 
     // Collect next chunk if it would still fit inside the limit
-    pub fn poll_signal_to_send(&mut self, limit: usize) -> Option<Chunk> {
+    pub fn poll_signal_to_send(&mut self, limit: usize) -> Option<Chunk<FakeContent>> {
         if self.send_next.front()?.serialized_size() < limit {
             // TODO if this is a sack prepend a shutdown
             self.send_next.pop_front()

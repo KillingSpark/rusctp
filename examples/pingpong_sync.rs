@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
     assoc_sync::assoc::Sctp,
     packet::{Chunk, Packet},
-    Settings,
+    FakeAddr, Settings,
 };
 
 fn main() {
@@ -25,9 +25,10 @@ fn main() {
         socket.connect(server_addr).unwrap();
         let socket_send = Arc::clone(&socket);
         let socket_recv = Arc::clone(&socket);
-        sctp.register_address(rusctp::TransportAddress::Fake(100), move |packet, chunk| {
-            send_to(&socket_send, packet, chunk)
-        });
+        sctp.register_address(
+            rusctp::TransportAddress::Fake(100u64),
+            move |packet, chunk| send_to(&socket_send, packet, chunk),
+        );
 
         eprintln!("Client builds conn");
         let sctp_recv = Arc::clone(&sctp);
@@ -96,7 +97,7 @@ fn main() {
                 eprintln!("Recv");
                 sctp_recv.receive_data(
                     Bytes::copy_from_slice(&buf[..size]),
-                    rusctp::TransportAddress::Fake(200),
+                    rusctp::TransportAddress::Fake(200u64),
                 );
             }
             sctp_recv.kill();
@@ -124,7 +125,11 @@ fn main() {
     j2.join().unwrap();
 }
 
-fn send_to(socket: &UdpSocket, packet: Packet, chunk: Chunk) -> Result<(), io::Error> {
+fn send_to<FakeContent: FakeAddr>(
+    socket: &UdpSocket,
+    packet: Packet,
+    chunk: Chunk<FakeContent>,
+) -> Result<(), io::Error> {
     let mut chunkbuf = BytesMut::new();
     chunk.serialize(&mut chunkbuf);
     let chunkbuf = chunkbuf.freeze();

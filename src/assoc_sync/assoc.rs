@@ -10,44 +10,59 @@ use bytes::Bytes;
 use crate::{
     assoc::{PollDataError, PollDataResult, SendError, SendErrorKind},
     packet::{Chunk, Packet},
-    AssocId, Settings, TransportAddress,
+    AssocId, FakeAddr, Settings, TransportAddress,
 };
 
-pub struct Sctp<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync> {
-    inner: Arc<Mutex<InnerSctp<SendCb>>>,
+pub struct Sctp<
+    FakeContent: FakeAddr,
+    SendCb: Fn(Packet, Chunk<FakeContent>) -> Result<(), io::Error> + Send + Sync,
+> {
+    inner: Arc<Mutex<InnerSctp<FakeContent, SendCb>>>,
     signal: Arc<Condvar>,
 }
 
-struct InnerSctp<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync> {
-    sctp: crate::Sctp,
-    assocs: HashMap<AssocId, Association>,
-    send_cb: HashMap<TransportAddress, SendCb>,
+struct InnerSctp<
+    FakeContent: FakeAddr,
+    SendCb: Fn(Packet, Chunk<FakeContent>) -> Result<(), io::Error> + Send + Sync,
+> {
+    sctp: crate::Sctp<FakeContent>,
+    assocs: HashMap<AssocId, Association<FakeContent>>,
+    send_cb: HashMap<TransportAddress<FakeContent>, SendCb>,
     done: bool,
-    ready_assocs: VecDeque<Association>,
+    ready_assocs: VecDeque<Association<FakeContent>>,
 }
 
 #[derive(Clone)]
-pub struct Association {
-    tx: Arc<AssociationTx>,
-    rx: Arc<AssociationRx>,
+pub struct Association<FakeContent: FakeAddr> {
+    tx: Arc<AssociationTx<FakeContent>>,
+    rx: Arc<AssociationRx<FakeContent>>,
 }
 
-impl Association {
-    pub fn split(&self) -> (Arc<AssociationTx>, Arc<AssociationRx>) {
+impl<FakeContent: FakeAddr> Association<FakeContent> {
+    pub fn split(
+        &self,
+    ) -> (
+        Arc<AssociationTx<FakeContent>>,
+        Arc<AssociationRx<FakeContent>>,
+    ) {
         (self.tx.clone(), self.rx.clone())
     }
 }
 
-pub struct AssociationTx {
-    wrapped: Mutex<crate::assoc::AssociationTx>,
+pub struct AssociationTx<FakeContent: FakeAddr> {
+    wrapped: Mutex<crate::assoc::AssociationTx<FakeContent>>,
     signal: Condvar,
 }
-pub struct AssociationRx {
-    wrapped: Mutex<crate::assoc::AssociationRx>,
+pub struct AssociationRx<FakeContent: FakeAddr> {
+    wrapped: Mutex<crate::assoc::AssociationRx<FakeContent>>,
     signal: Condvar,
 }
 
-impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync + 'static> Sctp<SendCb> {
+impl<
+        FakeContent: FakeAddr + Send + Sync,
+        SendCb: Fn(Packet, Chunk<FakeContent>) -> Result<(), io::Error> + Send + Sync + 'static,
+    > Sctp<FakeContent, SendCb>
+{
     pub fn new(settings: Settings) -> Self {
         let this = Self {
             inner: Arc::new(Mutex::new(InnerSctp {
@@ -71,11 +86,11 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync + 'static>
         this2
     }
 
-    pub fn register_address(&self, addr: TransportAddress, cb: SendCb) {
+    pub fn register_address(&self, addr: TransportAddress<FakeContent>, cb: SendCb) {
         self.inner.lock().unwrap().send_cb.insert(addr, cb);
     }
 
-    pub fn receive_data(&self, data: Bytes, from: TransportAddress) {
+    pub fn receive_data(&self, data: Bytes, from: TransportAddress<FakeContent>) {
         self.with_inner(|inner| {
             inner.sctp.receive_data(data, from);
             inner.handle_notifications();
@@ -85,10 +100,10 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync + 'static>
 
     pub fn connect(
         &self,
-        peer_addr: TransportAddress,
+        peer_addr: TransportAddress<FakeContent>,
         peer_port: u16,
         local_port: u16,
-    ) -> Association {
+    ) -> Association<FakeContent> {
         let mut inner = self.inner.lock().unwrap();
         inner
             .sctp
@@ -102,7 +117,7 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync + 'static>
         }
     }
 
-    pub fn accept(&self) -> Association {
+    pub fn accept(&self) -> Association<FakeContent> {
         let mut inner = self.inner.lock().unwrap();
         loop {
             if let Some(assoc) = inner.ready_assocs.pop_front() {
@@ -117,7 +132,10 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync + 'static>
         self.signal.notify_all();
     }
 
-    fn with_inner<Return>(&self, op: impl FnOnce(&mut InnerSctp<SendCb>) -> Return) -> Return {
+    fn with_inner<Return>(
+        &self,
+        op: impl FnOnce(&mut InnerSctp<FakeContent, SendCb>) -> Return,
+    ) -> Return {
         (op)(&mut self.inner.lock().unwrap())
     }
 
@@ -133,7 +151,11 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync + 'static>
     }
 }
 
-impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync> InnerSctp<SendCb> {
+impl<
+        FakeContent: FakeAddr,
+        SendCb: Fn(Packet, Chunk<FakeContent>) -> Result<(), io::Error> + Send + Sync,
+    > InnerSctp<FakeContent, SendCb>
+{
     fn handle_notifications(&mut self) {
         if let Some(assoc) = self.sctp.new_assoc() {
             let id = assoc.id();
@@ -182,7 +204,7 @@ impl<SendCb: Fn(Packet, Chunk) -> Result<(), io::Error> + Send + Sync> InnerSctp
     }
 }
 
-impl AssociationTx {
+impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn send_data(
         &self,
         mut data: Bytes,
@@ -212,7 +234,7 @@ impl AssociationTx {
         }
     }
 
-    pub fn poll_chunk_to_send(&self) -> (Packet, Chunk) {
+    pub fn poll_chunk_to_send(&self) -> (Packet, Chunk<FakeContent>) {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
             if let Some(chunk) = wrapped.poll_signal_to_send(1024).or_else(|| {
@@ -237,7 +259,7 @@ impl AssociationTx {
     }
 }
 
-impl AssociationRx {
+impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     pub fn recv_data(&self, stream: u16) -> Result<Bytes, PollDataError> {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {

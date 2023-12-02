@@ -1,4 +1,4 @@
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 
 #[cfg(feature = "async")]
 pub mod assoc_sync {
@@ -16,22 +16,102 @@ use packet::{Chunk, Packet, ParseError};
 
 use std::{
     collections::{HashMap, VecDeque},
-    net::{Ipv4Addr, Ipv6Addr},
+    fmt::Debug,
+    hash::Hash,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
 };
 
+pub trait FakeAddr:
+    Copy + Clone + PartialEq + Eq + PartialOrd + Ord + Hash + Debug + 'static
+{
+    fn parse(buf: &mut Bytes) -> Result<Self, ParseError>;
+    fn serialize(&self, buf: &mut impl BufMut);
+    fn serialized_size(&self) -> usize;
+}
+
+impl FakeAddr for u64 {
+    fn serialize(&self, buf: &mut impl BufMut) {
+        buf.put_u64(*self)
+    }
+    fn serialized_size(&self) -> usize {
+        8
+    }
+    fn parse(buf: &mut Bytes) -> Result<Self, ParseError> {
+        if buf.len() < 8 {
+            return Err(ParseError::IllegalFormat);
+        }
+        Ok(buf.get_u64())
+    }
+}
+
+impl FakeAddr for SocketAddr {
+    fn parse(buf: &mut Bytes) -> Result<Self, ParseError> {
+        if buf.len() < 1 {
+            return Err(ParseError::IllegalFormat);
+        }
+        match buf.get_u8() {
+            0 => {
+                if buf.len() < 2 + 4 {
+                    return Err(ParseError::IllegalFormat);
+                }
+                Ok(SocketAddr::V4(SocketAddrV4::new(
+                    buf.get_u32().into(),
+                    buf.get_u16(),
+                )))
+            }
+            1 => {
+                if buf.len() < 2 + 16 + 4 + 4 {
+                    return Err(ParseError::IllegalFormat);
+                }
+                Ok(SocketAddr::V6(SocketAddrV6::new(
+                    buf.get_u128().into(),
+                    buf.get_u16(),
+                    buf.get_u32(),
+                    buf.get_u32(),
+                )))
+            }
+            _ => {
+                return Err(ParseError::IllegalFormat);
+            }
+        }
+    }
+    fn serialize(&self, buf: &mut impl BufMut) {
+        match self {
+            SocketAddr::V4(v4) => {
+                buf.put_u8(0);
+                buf.put_u32((*v4.ip()).into());
+                buf.put_u16(v4.port());
+            }
+            SocketAddr::V6(v6) => {
+                buf.put_u8(1);
+                buf.put_u128((*v6.ip()).into());
+                buf.put_u16(v6.port());
+                buf.put_u32(v6.flowinfo());
+                buf.put_u32(v6.scope_id());
+            }
+        }
+    }
+    fn serialized_size(&self) -> usize {
+        match self {
+            SocketAddr::V4(_) => 1 + 2 + 4,
+            SocketAddr::V6(_) => 1 + 2 + 16 + 4 + 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum TransportAddress {
+pub enum TransportAddress<FakeContent: FakeAddr> {
     IpV4(Ipv4Addr),
     IpV6(Ipv6Addr),
-    Fake(u64),
+    Fake(FakeContent),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssocId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct AssocAlias {
-    peer_addr: TransportAddress,
+pub struct AssocAlias<FakeContent: FakeAddr> {
+    peer_addr: TransportAddress<FakeContent>,
     peer_port: u16,
     local_port: u16,
 }
@@ -45,11 +125,11 @@ struct WaitInitAck {
     local_initial_tsn: u32,
 }
 
-struct WaitCookieAck {
+struct WaitCookieAck<FakeContent: FakeAddr> {
     local_verification_tag: u32,
     peer_verification_tag: u32,
-    aliases: Vec<TransportAddress>,
-    original_address: TransportAddress,
+    aliases: Vec<TransportAddress<FakeContent>>,
+    original_address: TransportAddress<FakeContent>,
     local_initial_tsn: u32,
     peer_initial_tsn: u32,
     local_in_streams: u16,
@@ -68,24 +148,24 @@ pub struct Settings {
     pub pmtu: usize,
 }
 
-pub struct Sctp {
+pub struct Sctp<FakeContent: FakeAddr> {
     settings: Settings,
 
     assoc_id_gen: u64,
 
-    new_assoc: Option<Association>,
+    new_assoc: Option<Association<FakeContent>>,
     assoc_infos: HashMap<AssocId, PerAssocInfo>,
-    aliases: HashMap<AssocAlias, AssocId>,
+    aliases: HashMap<AssocAlias<FakeContent>, AssocId>,
 
-    wait_init_ack: HashMap<AssocAlias, WaitInitAck>,
-    wait_cookie_ack: HashMap<AssocAlias, WaitCookieAck>,
+    wait_init_ack: HashMap<AssocAlias<FakeContent>, WaitInitAck>,
+    wait_cookie_ack: HashMap<AssocAlias<FakeContent>, WaitCookieAck<FakeContent>>,
 
-    tx_notifications: VecDeque<(AssocId, TxNotification)>,
-    send_immediate: VecDeque<(TransportAddress, Packet, Chunk)>,
-    rx_notifications: VecDeque<(AssocId, RxNotification)>,
+    tx_notifications: VecDeque<(AssocId, TxNotification<FakeContent>)>,
+    send_immediate: VecDeque<(TransportAddress<FakeContent>, Packet, Chunk<FakeContent>)>,
+    rx_notifications: VecDeque<(AssocId, RxNotification<FakeContent>)>,
 }
 
-impl Sctp {
+impl<FakeContent: FakeAddr> Sctp<FakeContent> {
     pub fn new(settings: Settings) -> Self {
         Self {
             settings,
@@ -104,7 +184,7 @@ impl Sctp {
         }
     }
 
-    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress) {
+    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress<FakeContent>) {
         let Some(packet) = Packet::parse(&data) else {
             return;
         };
@@ -158,7 +238,7 @@ impl Sctp {
     fn process_chunks(
         &mut self,
         assoc_id: AssocId,
-        from: TransportAddress,
+        from: TransportAddress<FakeContent>,
         packet: &Packet,
         mut data: Bytes,
     ) {
@@ -238,24 +318,31 @@ impl Sctp {
         }
     }
 
-    pub fn rx_notifications(&mut self) -> impl Iterator<Item = (AssocId, RxNotification)> + '_ {
+    pub fn rx_notifications(
+        &mut self,
+    ) -> impl Iterator<Item = (AssocId, RxNotification<FakeContent>)> + '_ {
         self.rx_notifications.drain(..)
     }
-    pub fn tx_notifications(&mut self) -> impl Iterator<Item = (AssocId, TxNotification)> + '_ {
+    pub fn tx_notifications(
+        &mut self,
+    ) -> impl Iterator<Item = (AssocId, TxNotification<FakeContent>)> + '_ {
         self.tx_notifications.drain(..)
     }
     pub fn send_immediate(
         &mut self,
-    ) -> impl Iterator<Item = (TransportAddress, Packet, Chunk)> + '_ {
+    ) -> impl Iterator<Item = (TransportAddress<FakeContent>, Packet, Chunk<FakeContent>)> + '_
+    {
         self.send_immediate.drain(..)
     }
-    pub fn next_send_immediate(&mut self) -> Option<(TransportAddress, Packet, Chunk)> {
+    pub fn next_send_immediate(
+        &mut self,
+    ) -> Option<(TransportAddress<FakeContent>, Packet, Chunk<FakeContent>)> {
         self.send_immediate.pop_front()
     }
     pub fn has_next_send_immediate(&mut self) -> bool {
         self.send_immediate.front().is_some()
     }
-    pub fn new_assoc(&mut self) -> Option<Association> {
+    pub fn new_assoc(&mut self) -> Option<Association<FakeContent>> {
         self.new_assoc.take()
     }
 }

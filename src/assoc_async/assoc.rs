@@ -11,55 +11,60 @@ use bytes::Bytes;
 use crate::{
     assoc::{PollDataError, PollDataResult, SendError, SendErrorKind, Timer},
     packet::{Chunk, Packet},
-    AssocId, Settings, TransportAddress,
+    AssocId, FakeAddr, Settings, TransportAddress,
 };
 
-pub struct Sctp {
-    inner: Arc<Mutex<InnerSctp>>,
+pub struct Sctp<FakeContent: FakeAddr> {
+    inner: Arc<Mutex<InnerSctp<FakeContent>>>,
 }
 
-struct InnerSctp {
-    sctp: crate::Sctp,
-    assocs: HashMap<AssocId, Association>,
+struct InnerSctp<FakeContent: FakeAddr> {
+    sctp: crate::Sctp<FakeContent>,
+    assocs: HashMap<AssocId, Association<FakeContent>>,
     done: bool,
-    ready_assocs: VecDeque<Association>,
+    ready_assocs: VecDeque<Association<FakeContent>>,
     new_assoc_wakers: Vec<Waker>,
     send_immediate_wakers: Vec<Waker>,
 }
 
 #[derive(Clone)]
-pub struct Association {
-    tx: Arc<AssociationTx>,
-    rx: Arc<AssociationRx>,
+pub struct Association<FakeContent: FakeAddr> {
+    tx: Arc<AssociationTx<FakeContent>>,
+    rx: Arc<AssociationRx<FakeContent>>,
 }
 
-impl Association {
-    pub fn split(&self) -> (Arc<AssociationTx>, Arc<AssociationRx>) {
+impl<FakeContent: FakeAddr> Association<FakeContent> {
+    pub fn split(
+        &self,
+    ) -> (
+        Arc<AssociationTx<FakeContent>>,
+        Arc<AssociationRx<FakeContent>>,
+    ) {
         (self.tx.clone(), self.rx.clone())
     }
 }
 
-pub struct AssociationTx {
-    wrapped: Mutex<InnerTx>,
+pub struct AssociationTx<FakeContent: FakeAddr> {
+    wrapped: Mutex<InnerTx<FakeContent>>,
 }
 
-struct InnerTx {
-    tx: crate::assoc::AssociationTx,
+struct InnerTx<FakeContent: FakeAddr> {
+    tx: crate::assoc::AssociationTx<FakeContent>,
     send_wakers: Vec<Waker>,
     poll_wakers: Vec<Waker>,
 }
 
-pub struct AssociationRx {
-    wrapped: Mutex<InnerRx>,
-    tx: Arc<AssociationTx>,
+pub struct AssociationRx<FakeContent: FakeAddr> {
+    wrapped: Mutex<InnerRx<FakeContent>>,
+    tx: Arc<AssociationTx<FakeContent>>,
 }
 
-struct InnerRx {
-    rx: crate::assoc::AssociationRx,
+struct InnerRx<FakeContent: FakeAddr> {
+    rx: crate::assoc::AssociationRx<FakeContent>,
     recv_wakers: HashMap<u16, Vec<Waker>>,
 }
 
-impl Sctp {
+impl<FakeContent: FakeAddr> Sctp<FakeContent> {
     pub fn new(settings: Settings) -> Self {
         Self {
             inner: Arc::new(Mutex::new(InnerSctp {
@@ -73,7 +78,7 @@ impl Sctp {
         }
     }
 
-    pub fn receive_data(&self, data: Bytes, from: TransportAddress) {
+    pub fn receive_data(&self, data: Bytes, from: TransportAddress<FakeContent>) {
         let mut inner = self.inner.lock().unwrap();
         inner.sctp.receive_data(data, from);
         if inner.sctp.has_next_send_immediate() {
@@ -84,20 +89,20 @@ impl Sctp {
 
     pub fn connect(
         &self,
-        peer_addr: TransportAddress,
+        peer_addr: TransportAddress<FakeContent>,
         peer_port: u16,
         local_port: u16,
-    ) -> impl Future<Output = Association> {
+    ) -> impl Future<Output = Association<FakeContent>> {
         let mut inner = self.inner.lock().unwrap();
         inner
             .sctp
             .init_association(peer_addr, peer_port, local_port);
 
-        struct ConnectFuture {
-            inner: Arc<Mutex<InnerSctp>>,
+        struct ConnectFuture<FakeContent: FakeAddr> {
+            inner: Arc<Mutex<InnerSctp<FakeContent>>>,
         }
-        impl Future for ConnectFuture {
-            type Output = Association;
+        impl<FakeContent: FakeAddr> Future for ConnectFuture<FakeContent> {
+            type Output = Association<FakeContent>;
             fn poll(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -116,12 +121,12 @@ impl Sctp {
         }
     }
 
-    pub fn accept(&self) -> impl Future<Output = Association> {
-        struct AcceptFuture {
-            inner: Arc<Mutex<InnerSctp>>,
+    pub fn accept(&self) -> impl Future<Output = Association<FakeContent>> {
+        struct AcceptFuture<FakeContent: FakeAddr> {
+            inner: Arc<Mutex<InnerSctp<FakeContent>>>,
         }
-        impl Future for AcceptFuture {
-            type Output = Association;
+        impl<FakeContent: FakeAddr> Future for AcceptFuture<FakeContent> {
+            type Output = Association<FakeContent>;
             fn poll(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
@@ -144,13 +149,15 @@ impl Sctp {
         self.inner.lock().unwrap().done = true;
     }
 
-    pub fn next_send_immediate(&self) -> impl Future<Output = (TransportAddress, Packet, Chunk)> {
-        struct NextSendFuture {
-            inner: Arc<Mutex<InnerSctp>>,
+    pub fn next_send_immediate(
+        &self,
+    ) -> impl Future<Output = (TransportAddress<FakeContent>, Packet, Chunk<FakeContent>)> {
+        struct NextSendFuture<FakeContent: FakeAddr> {
+            inner: Arc<Mutex<InnerSctp<FakeContent>>>,
         }
 
-        impl Future for NextSendFuture {
-            type Output = (TransportAddress, Packet, Chunk);
+        impl<FakeContent: FakeAddr> Future for NextSendFuture<FakeContent> {
+            type Output = (TransportAddress<FakeContent>, Packet, Chunk<FakeContent>);
 
             fn poll(
                 self: std::pin::Pin<&mut Self>,
@@ -172,7 +179,7 @@ impl Sctp {
     }
 }
 
-impl InnerSctp {
+impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
     fn handle_notifications(&mut self) {
         if let Some(assoc) = self.sctp.new_assoc() {
             let id = assoc.id();
@@ -236,7 +243,7 @@ impl InnerSctp {
     }
 }
 
-impl AssociationTx {
+impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn send_data(
         self: &Arc<Self>,
         data: Bytes,
@@ -245,15 +252,15 @@ impl AssociationTx {
         immediate: bool,
         unordered: bool,
     ) -> impl Future<Output = Result<(), SendError>> {
-        struct SendFuture {
-            tx: Arc<AssociationTx>,
+        struct SendFuture<FakeContent: FakeAddr> {
+            tx: Arc<AssociationTx<FakeContent>>,
             data: Option<Bytes>,
             stream: u16,
             ppid: u32,
             immediate: bool,
             unordered: bool,
         }
-        impl Future for SendFuture {
+        impl<FakeContent: FakeAddr> Future for SendFuture<FakeContent> {
             type Output = Result<(), SendError>;
 
             fn poll(
@@ -311,29 +318,33 @@ impl AssociationTx {
         wrapped.poll_wakers.drain(..).for_each(Waker::wake);
     }
 
+    pub fn shutdown_complete(&self) -> bool {
+        self.wrapped.lock().unwrap().tx.shutdown_complete()
+    }
+
+    pub fn initiate_shutdown(&self) {
+        self.wrapped.lock().unwrap().tx.initiate_shutdown();
+    }
+
     pub fn poll_chunk_to_send(
-        self: &Arc<AssociationTx>,
+        self: &Arc<AssociationTx<FakeContent>>,
         limit: usize,
-    ) -> impl Future<Output = (Packet, Chunk)> {
-        struct PollFuture {
-            tx: Arc<AssociationTx>,
+    ) -> impl Future<Output = (Packet, Chunk<FakeContent>)> {
+        struct PollFuture<FakeContent: FakeAddr> {
+            tx: Arc<AssociationTx<FakeContent>>,
             limit: usize,
         }
 
-        impl Future for PollFuture {
-            type Output = (Packet, Chunk);
+        impl<FakeContent: FakeAddr> Future for PollFuture<FakeContent> {
+            type Output = (Packet, Chunk<FakeContent>);
 
             fn poll(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.tx.wrapped.lock().unwrap();
-                if let Some(chunk) = wrapped.tx.poll_signal_to_send(self.limit).or_else(|| {
-                    wrapped
-                        .tx
-                        .poll_data_to_send(self.limit, Instant::now())
-                        .map(Chunk::Data)
-                }) {
+                if let Some(chunk) = AssociationTx::try_poll_any_chunk(&mut wrapped.tx, self.limit)
+                {
                     if let Chunk::Data(_) = chunk {
                         for waker in wrapped.send_wakers.drain(..) {
                             waker.wake();
@@ -353,38 +364,38 @@ impl AssociationTx {
         }
     }
 
-    pub fn try_poll_chunk_to_send(
-        self: &Arc<AssociationTx>,
+    fn try_poll_any_chunk(
+        tx: &mut crate::assoc::AssociationTx<FakeContent>,
         limit: usize,
-    ) -> Option<(Packet, Chunk)> {
+    ) -> Option<Chunk<FakeContent>> {
+        tx.poll_signal_to_send(limit)
+            .or_else(|| tx.poll_data_to_send(limit, Instant::now()).map(Chunk::Data))
+    }
+
+    pub fn try_poll_chunk_to_send(
+        self: &Arc<AssociationTx<FakeContent>>,
+        limit: usize,
+    ) -> Option<(Packet, Chunk<FakeContent>)> {
         let mut wrapped = self.wrapped.lock().unwrap();
-        wrapped
-            .tx
-            .poll_signal_to_send(limit)
-            .or_else(|| {
-                wrapped
-                    .tx
-                    .poll_data_to_send(limit, Instant::now())
-                    .map(Chunk::Data)
-            })
+        Self::try_poll_any_chunk(&mut wrapped.tx, limit)
             .map(|chunk| (wrapped.tx.packet_header(), chunk))
     }
 
-    pub fn primary_path(&self) -> TransportAddress {
+    pub fn primary_path(&self) -> TransportAddress<FakeContent> {
         self.wrapped.lock().unwrap().tx.primary_path()
     }
 }
 
-impl AssociationRx {
+impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     pub fn recv_data(
-        self: &Arc<AssociationRx>,
+        self: &Arc<AssociationRx<FakeContent>>,
         stream: u16,
     ) -> impl Future<Output = Result<Bytes, PollDataError>> {
-        struct RecvFuture {
-            rx: Arc<AssociationRx>,
+        struct RecvFuture<FakeContent: FakeAddr> {
+            rx: Arc<AssociationRx<FakeContent>>,
             stream: u16,
         }
-        impl Future for RecvFuture {
+        impl<FakeContent: FakeAddr> Future for RecvFuture<FakeContent> {
             type Output = Result<Bytes, PollDataError>;
 
             fn poll(

@@ -7,22 +7,22 @@ pub use tx::*;
 pub(crate) mod init;
 mod srtt;
 
-use crate::{packet::Tsn, AssocId};
+use crate::{packet::Tsn, AssocId, FakeAddr};
 
-pub struct Association {
+pub struct Association<FakeContent: FakeAddr> {
     id: AssocId,
-    rx: AssociationRx,
-    tx: AssociationTx,
+    rx: AssociationRx<FakeContent>,
+    tx: AssociationTx<FakeContent>,
 }
 
-impl Association {
+impl<FakeContent: FakeAddr> Association<FakeContent> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: AssocId,
         init_peer_tsn: Tsn,
         num_in_streams: u16,
         in_buffer_limit: usize,
-        tx_settings: AssocTxSettings,
+        tx_settings: AssocTxSettings<FakeContent>,
     ) -> Self {
         Self {
             id,
@@ -35,27 +35,32 @@ impl Association {
         self.id
     }
 
-    pub fn split(self) -> (AssociationRx, AssociationTx) {
+    pub fn split(self) -> (AssociationRx<FakeContent>, AssociationTx<FakeContent>) {
         (self.rx, self.tx)
     }
 
-    pub fn split_mut(&mut self) -> (&mut AssociationRx, &mut AssociationTx) {
+    pub fn split_mut(
+        &mut self,
+    ) -> (
+        &mut AssociationRx<FakeContent>,
+        &mut AssociationTx<FakeContent>,
+    ) {
         (&mut self.rx, &mut self.tx)
     }
 
-    pub fn tx(&self) -> &AssociationTx {
+    pub fn tx(&self) -> &AssociationTx<FakeContent> {
         &self.tx
     }
 
-    pub fn tx_mut(&mut self) -> &mut AssociationTx {
+    pub fn tx_mut(&mut self) -> &mut AssociationTx<FakeContent> {
         &mut self.tx
     }
 
-    pub fn rx(&self) -> &AssociationRx {
+    pub fn rx(&self) -> &AssociationRx<FakeContent> {
         &self.rx
     }
 
-    pub fn rx_mut(&mut self) -> &mut AssociationRx {
+    pub fn rx_mut(&mut self) -> &mut AssociationRx<FakeContent> {
         &mut self.rx
     }
 }
