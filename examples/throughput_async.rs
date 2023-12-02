@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::{Instant, Duration}};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rand::RngCore;
@@ -80,7 +80,6 @@ fn main() {
 }
 
 const PMTU: usize = 64_000;
-const PRINT_EVERY_X_BTES: u64 = 1_000_000_000;
 
 fn make_settings() -> Settings {
     Settings {
@@ -157,10 +156,12 @@ fn run_server(
                     ctx.network_send_loop(tx.clone());
                 }
                 _ = signal.recv() => {
-                    // TODO shutdown server
+                    break;
                 }
             }
         }
+
+        // TODO cleanup all connections
     });
     runtime
 }
@@ -203,7 +204,7 @@ impl Context {
         let mut packet_buf = BytesMut::with_capacity(PMTU);
         let socket = self.socket.clone();
         tokio::spawn(async move {
-            loop {
+            while !tx.shutdown_complete() {
                 chunk_buf.clear();
                 packet_buf.clear();
                 let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
@@ -236,6 +237,7 @@ impl Context {
                 }
                 chunk_buf = chunk_buf_limit.into_inner();
             }
+            eprintln!("Left network send loop");
         });
     }
 
@@ -244,7 +246,7 @@ impl Context {
             let data = Bytes::copy_from_slice(&[0u8; PMTU - 200]);
             let mut bytes_ctr = 0;
             let mut start = Instant::now();
-            loop {
+            while !tx.shutdown_complete() {
                 match tx.send_data(data.clone(), 0, 0, false, false).await {
                     Ok(()) => { /* happy */ }
                     Err(SendError { data: _, kind }) => {
@@ -253,7 +255,7 @@ impl Context {
                     }
                 }
                 bytes_ctr += data.len() as u64;
-                if bytes_ctr >= PRINT_EVERY_X_BTES {
+                if start.elapsed() >= Duration::from_secs(1) {
                     let bytes_per_sec = (1_000_000 * bytes_ctr)
                         / (std::time::Instant::now() - start).as_micros() as u64;
                     format_throughput("Send", bytes_per_sec as usize);
@@ -261,6 +263,7 @@ impl Context {
                     bytes_ctr = 0;
                 }
             }
+            eprintln!("Left send data loop");
         });
     }
 
@@ -268,10 +271,10 @@ impl Context {
         tokio::spawn(async move {
             let mut bytes_ctr = 0u64;
             let mut start = std::time::Instant::now();
-            loop {
+            while !rx.shutdown_complete() {
                 let data = rx.recv_data(0).await.unwrap();
                 bytes_ctr += data.len() as u64;
-                if bytes_ctr >= PRINT_EVERY_X_BTES {
+                if start.elapsed() >= Duration::from_secs(1) {
                     let bytes_per_sec = (1_000_000 * bytes_ctr)
                         / (std::time::Instant::now() - start).as_micros() as u64;
                     format_throughput("Recv", bytes_per_sec as usize);
@@ -279,6 +282,7 @@ impl Context {
                     bytes_ctr = 0;
                 }
             }
+            eprintln!("Left receive data loop");
         });
     }
 }

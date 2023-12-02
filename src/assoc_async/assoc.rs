@@ -209,15 +209,24 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
         }
 
         for (id, tx_notification) in self.sctp.tx_notifications() {
+            let mut remove = false;
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let mut tx = assoc.tx.wrapped.lock().unwrap();
                 tx.tx
                     .notification(tx_notification, std::time::Instant::now());
                 tx.poll_wakers.drain(..).for_each(Waker::wake);
+                if tx.tx.shutdown_complete() && assoc.rx.shutdown_complete() {
+                    remove = true;
+                }
+            }
+            if remove {
+                // TODO notify sctp about this
+                self.assocs.remove(&id);
             }
         }
 
         for (id, rx_notification) in self.sctp.rx_notifications() {
+            let mut remove = false;
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let mut rx = assoc.rx.wrapped.lock().unwrap();
                 let stream_to_wake = rx_notification.get_stream_id();
@@ -238,6 +247,13 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
                         .notification(tx_notification, std::time::Instant::now());
                     tx.poll_wakers.drain(..).for_each(Waker::wake);
                 }
+                if tx.tx.shutdown_complete() && rx.rx.shutdown_complete() {
+                    remove = true;
+                }
+            }
+            if remove {
+                // TODO notify sctp about this
+                self.assocs.remove(&id);
             }
         }
     }
@@ -387,6 +403,10 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 }
 
 impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
+    pub fn shutdown_complete(&self) -> bool {
+        self.wrapped.lock().unwrap().rx.shutdown_complete()
+    }
+
     pub fn recv_data(
         self: &Arc<AssociationRx<FakeContent>>,
         stream: u16,
