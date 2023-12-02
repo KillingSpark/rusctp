@@ -354,9 +354,13 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 
     // Collect next chunk if it would still fit inside the limit
     pub fn poll_signal_to_send(&mut self, limit: usize) -> Option<Chunk<FakeContent>> {
-        if self.send_next.front()?.serialized_size() < limit {
-            // TODO if this is a sack prepend a shutdown
-            self.send_next.pop_front()
+        if let Some(front) = self.send_next.front() {
+            if front.serialized_size() <= limit {
+                // TODO if this is a sack prepend a shutdown
+                self.send_next.pop_front()
+            } else {
+                None
+            }
         } else {
             match self.shutdown_state {
                 Some(ShutdownState::TryingTo) => {
