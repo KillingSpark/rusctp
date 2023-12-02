@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{collections::VecDeque, time::Instant};
 
 use crate::packet::data::DataChunk;
@@ -119,6 +120,70 @@ pub enum SendErrorKind {
 pub struct SendError {
     pub data: Bytes,
     pub kind: SendErrorKind,
+}
+
+pub enum PollSendResult<T> {
+    None,
+    Some(T),
+    Closed,
+}
+
+impl<T> PollSendResult<T> {
+    pub fn is_some(&self) -> bool {
+        matches!(self, Self::Some(_))
+    }
+    pub fn is_none(&self) -> bool {
+        matches!(self, Self::Some(_))
+    }
+    pub fn is_err(&self) -> bool {
+        matches!(self, Self::Some(_))
+    }
+    pub fn or_else(self, f: impl FnOnce() -> PollSendResult<T>) -> PollSendResult<T> {
+        match self {
+            Self::Some(_) | Self::Closed => self,
+            Self::None => f(),
+        }
+    }
+    pub fn map<U>(self, map: impl FnOnce(T) -> U) -> PollSendResult<U> {
+        match self {
+            Self::None => PollSendResult::None,
+            Self::Closed => PollSendResult::Closed,
+            Self::Some(t) => PollSendResult::Some(map(t)),
+        }
+    }
+
+    pub fn unwrap(self) -> T {
+        match self {
+            Self::Some(t) => t,
+            Self::None => panic!("Was none"),
+            Self::Closed => panic!("Was closed"),
+        }
+    }
+
+    pub fn expect(self, message: &str) -> T {
+        match self {
+            Self::Some(t) => t,
+            Self::None => panic!("{message} Was none!"),
+            Self::Closed => panic!("{message} Was closed"),
+        }
+    }
+
+    pub fn some(self) -> Option<T> {
+        match self {
+            Self::Some(t) => Some(t),
+            Self::None => None,
+            Self::Closed => None,
+        }
+    }
+}
+
+impl<T> From<Option<T>> for PollSendResult<T> {
+    fn from(value: Option<T>) -> Self {
+        match value {
+            Some(t) => Self::Some(t),
+            None => Self::None,
+        }
+    }
 }
 
 impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
@@ -353,36 +418,44 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     }
 
     // Collect next chunk if it would still fit inside the limit
-    pub fn poll_signal_to_send(&mut self, limit: usize) -> Option<Chunk<FakeContent>> {
+    pub fn poll_signal_to_send(&mut self, limit: usize) -> PollSendResult<Chunk<FakeContent>> {
         if let Some(front) = self.send_next.front() {
             if front.serialized_size() <= limit {
                 // TODO if this is a sack prepend a shutdown
-                self.send_next.pop_front()
+                self.send_next.pop_front().into()
             } else {
-                None
+                PollSendResult::None
             }
         } else {
             match self.shutdown_state {
                 Some(ShutdownState::TryingTo) => {
                     if self.resend_queue.is_empty() && self.out_queue.is_empty() {
-                        // TODO set retransmit timer for this
                         self.shutdown_state = Some(ShutdownState::ShutdownSent);
                         // TODO monitor sacks we send so we know which tsn we have sen last
-                        Some(Chunk::ShutDown(Tsn(0)))
+                        PollSendResult::Some(Chunk::ShutDown(Tsn(0)))
                     } else {
-                        None
+                        PollSendResult::None
                     }
                 }
                 Some(ShutdownState::ShutdownReceived) => {
                     if self.resend_queue.is_empty() && self.out_queue.is_empty() {
-                        // TODO set retransmit timer for this
                         self.shutdown_state = Some(ShutdownState::ShutdownAckSent);
-                        Some(Chunk::ShutDownAck)
+                        PollSendResult::Some(Chunk::ShutDownAck)
                     } else {
-                        None
+                        PollSendResult::None
                     }
                 }
-                _ => None,
+                Some(ShutdownState::AbortReceived) => PollSendResult::Closed,
+                Some(ShutdownState::Complete) => PollSendResult::Closed,
+                Some(ShutdownState::ShutdownSent) => {
+                    // TODO set retransmit timer for this
+                    PollSendResult::None
+                }
+                Some(ShutdownState::ShutdownAckSent) => {
+                    // TODO set retransmit timer for this
+                    PollSendResult::None
+                }
+                None => PollSendResult::None,
             }
         }
     }
@@ -462,15 +535,19 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     }
 
     // Collect next chunk if it would still fit inside the limit
-    pub fn poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> Option<DataChunk> {
+    pub fn poll_data_to_send(
+        &mut self,
+        data_limit: usize,
+        now: Instant,
+    ) -> PollSendResult<DataChunk> {
         let x = self._poll_data_to_send(data_limit, now);
-        if x.is_none() {
+        if x.is_none() || x.is_err() {
             self.assert_invariants();
             //self.print_state();
         }
         x
     }
-    fn _poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> Option<DataChunk> {
+    fn _poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> PollSendResult<DataChunk> {
         // The data chunk header always takes 16 bytes
         let data_limit = data_limit - 16;
 
@@ -484,13 +561,13 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                             self.set_timeout(now);
                         }
                         //eprintln!("Slow RTX: {:?}", rtx.tsn);
-                        return Some(rtx);
+                        return PollSendResult::Some(rtx);
                     }
                 } else {
                     // TODO this is an internal bug
                     panic!("We are in loss recovery but have no packets in the resend queue?!")
                 }
-                None
+                PollSendResult::None
             }
             congestion::CongestionState::FastRecovery => {
                 for packet in self.resend_queue.iter_mut() {
@@ -501,27 +578,32 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                         packet.marked_was_fast_retransmit = true;
                         packet.marked_for_fast_retransmit = false;
                         //eprintln!("Fast RTX {:?}", packet.data.tsn);
-                        return Some(packet.data.clone());
+                        return PollSendResult::Some(packet.data.clone());
                     }
                 }
-                None
+                PollSendResult::None
             }
             congestion::CongestionState::CongestionAvoidance
             | congestion::CongestionState::SlowStart => {
                 // anything else is subject to the congestion window limits
-                let front = self.out_queue.front()?;
+                let Some(front) = self.out_queue.front() else {
+                    return PollSendResult::None;
+                };
+
                 let front_buf_len = front.buf.len();
 
                 // before sending new packets we need to check the peers receive window
                 if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
-                    return None;
+                    return PollSendResult::None;
                 }
 
                 // check if we can just send the next chunk entirely or if we need to fragment
                 let packet = if front_buf_len < data_limit
                     && self.current_in_flight < self.primary_congestion.cwnd
                 {
-                    let mut packet = self.out_queue.pop_front()?;
+                    let Some(mut packet) = self.out_queue.pop_front() else {
+                        return PollSendResult::None;
+                    };
                     packet.tsn = self.tsn_counter;
                     packet.end = true;
 
@@ -530,10 +612,12 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     // TODO I am sure there are better metrics to determin usefulness of fragmentation
                     let fragment_data_len = data_limit;
                     if fragment_data_len == 0 {
-                        return None;
+                        return PollSendResult::None;
                     }
 
-                    let full_packet = self.out_queue.front_mut()?;
+                    let Some(full_packet) = self.out_queue.front_mut() else {
+                        return PollSendResult::None;
+                    };
                     let fragment = DataChunk {
                         tsn: self.tsn_counter,
                         stream_id: full_packet.stream_id,
@@ -551,7 +635,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     full_packet.buf.advance(fragment_data_len);
                     fragment
                 } else {
-                    return None;
+                    return PollSendResult::None;
                 };
                 self.tsn_counter = self.tsn_counter.increase();
                 self.peer_rcv_window -= packet.buf.len() as u32;
@@ -562,7 +646,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 if self.rto_timer.is_none() {
                     self.set_timeout(now);
                 }
-                Some(packet)
+                PollSendResult::Some(packet)
             }
         }
     }

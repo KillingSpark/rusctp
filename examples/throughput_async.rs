@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, sync::Arc, time::{Instant, Duration}};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rand::RngCore;
@@ -110,7 +114,7 @@ fn run_client(
 
         let ctx = Context { sctp, socket };
 
-        ctx.sctp_network_loops();
+        let stop_sctp_loops = ctx.sctp_network_loops();
 
         let assoc = ctx
             .sctp
@@ -123,8 +127,10 @@ fn run_client(
         ctx.network_send_loop(tx.clone());
         ctx.send_data_loop(tx.clone());
 
+        // Wait for singal to shut down
         let _ = signal.recv().await;
         tx.initiate_shutdown();
+        stop_sctp_loops.send(()).unwrap();
     });
     runtime
 }
@@ -145,7 +151,7 @@ fn run_server(
 
         let ctx = Context { sctp, socket };
 
-        ctx.sctp_network_loops();
+        let stop_sctp_loops = ctx.sctp_network_loops();
 
         loop {
             tokio::select! {
@@ -161,6 +167,7 @@ fn run_server(
             }
         }
 
+        stop_sctp_loops.send(()).unwrap();
         // TODO cleanup all connections
     });
     runtime
@@ -172,31 +179,51 @@ struct Context {
 }
 
 impl Context {
-    fn sctp_network_loops(&self) {
+    fn sctp_network_loops(&self) -> tokio::sync::broadcast::Sender<()> {
+        let (signal_tx, mut signal1) = tokio::sync::broadcast::channel(1);
+        let mut signal2 = signal_tx.subscribe();
         let sctp = self.sctp.clone();
         let socket = self.socket.clone();
         tokio::spawn(async move {
             loop {
-                let (addr, packet, chunk) = sctp.next_send_immediate().await;
-                if let TransportAddress::Fake(addr) = addr {
-                    send_chunk(&socket, addr, packet, chunk).await.unwrap();
+                tokio::select! {
+                    (addr, packet, chunk) = sctp.next_send_immediate() => {
+                        if let TransportAddress::Fake(addr) = addr {
+                            send_chunk(&socket, addr, packet, chunk).await.unwrap();
+                        }
+                    }
+                    _ = signal1.recv() => {
+                        break;
+                    }
                 }
             }
+            eprintln!("Left sctp send immediate loop");
         });
 
         let sctp = self.sctp.clone();
         let socket = self.socket.clone();
         tokio::spawn(async move {
+            let mut buf = [0u8; PMTU];
             loop {
-                let mut buf = [0u8; PMTU];
-                while let Ok((size, addr)) = socket.recv_from(&mut buf).await {
-                    sctp.receive_data(
-                        Bytes::copy_from_slice(&buf[..size]),
-                        TransportAddress::Fake(addr),
-                    );
+                tokio::select! {
+                    recv = socket.recv_from(&mut buf) => {
+                        if let Ok((size, addr)) = recv {
+                            sctp.receive_data(
+                                Bytes::copy_from_slice(&buf[..size]),
+                                TransportAddress::Fake(addr),
+                            );
+                        } else {
+                            break;
+                        }
+                    }
+                    _ = signal2.recv() => {
+                        break;
+                    }
                 }
             }
+            eprintln!("Left network receive loop");
         });
+        signal_tx
     }
 
     fn network_send_loop(&self, tx: Arc<AssociationTx<SocketAddr>>) {
@@ -213,8 +240,10 @@ impl Context {
 
                     tokio::select! {
                         packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
-                            if let TransportAddress::Fake(addr) = tx.primary_path() {
-                                send_to(&socket, addr, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                            if let Ok(packet) = packet {
+                                if let TransportAddress::Fake(addr) = tx.primary_path() {
+                                    send_to(&socket, addr, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                                }
                             }
                         }
                         _ = tokio::time::sleep(timeout) => {
@@ -222,17 +251,18 @@ impl Context {
                         }
                     };
                 } else {
-                    let packet = collect_all_chunks(&tx, &mut chunk_buf_limit).await;
-                    if let TransportAddress::Fake(addr) = tx.primary_path() {
-                        send_to(
-                            &socket,
-                            addr,
-                            packet,
-                            chunk_buf_limit.get_ref().as_ref(),
-                            &mut packet_buf,
-                        )
-                        .await
-                        .unwrap();
+                    if let Ok(packet) = collect_all_chunks(&tx, &mut chunk_buf_limit).await {
+                        if let TransportAddress::Fake(addr) = tx.primary_path() {
+                            send_to(
+                                &socket,
+                                addr,
+                                packet,
+                                chunk_buf_limit.get_ref().as_ref(),
+                                &mut packet_buf,
+                            )
+                            .await
+                            .unwrap();
+                        }
                     }
                 }
                 chunk_buf = chunk_buf_limit.into_inner();
@@ -290,13 +320,13 @@ impl Context {
 async fn collect_all_chunks(
     tx: &Arc<AssociationTx<SocketAddr>>,
     chunks: &mut impl BufMut,
-) -> Packet {
-    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut()).await;
+) -> Result<Packet, ()> {
+    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut()).await?;
     chunk.serialize(chunks);
-    while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()) {
+    while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()).some() {
         chunk.serialize(chunks);
     }
-    packet
+    Ok(packet)
 }
 
 async fn send_to(

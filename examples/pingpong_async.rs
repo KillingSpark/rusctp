@@ -86,7 +86,8 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             if let Some(timer) = tx.next_timeout() {
                 let timeout = timer.at() - Instant::now();
                 tokio::select! {
-                    (packet, chunk) = tx.poll_chunk_to_send(1500) => {
+                    poll_result = tx.poll_chunk_to_send(1500) => {
+                        let (packet, chunk) = poll_result.unwrap();
                         send_to(&socket, packet, chunk).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
@@ -94,7 +95,7 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                     }
                 };
             } else {
-                let (packet, chunk) = tx.poll_chunk_to_send(1500).await;
+                let (packet, chunk) = tx.poll_chunk_to_send(1500).await.unwrap();
                 send_to(&socket, packet, chunk).await.unwrap();
             }
         }
@@ -160,7 +161,8 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             if let Some(timer) = tx.next_timeout() {
                 let timeout = timer.at() - Instant::now();
                 tokio::select! {
-                    (packet, chunk) = tx.poll_chunk_to_send(1500) => {
+                    poll_result = tx.poll_chunk_to_send(1500) => {
+                        let (packet, chunk) = poll_result.unwrap();
                         send_to(&socket, packet, chunk).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
@@ -168,7 +170,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                     }
                 };
             } else {
-                let (packet, chunk) = tx.poll_chunk_to_send(1500).await;
+                let (packet, chunk) = tx.poll_chunk_to_send(1500).await.unwrap();
                 send_to(&socket, packet, chunk).await.unwrap();
             }
         }

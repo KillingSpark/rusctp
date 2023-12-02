@@ -92,7 +92,7 @@ fn run_client(
                 let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
                 tokio::select! {
                     packet = collect_all_chunks(&tx, &mut chunk_buf) => {
-                        send_to(&transport_tx, packet, chunk_buf.into_inner().freeze()).await.unwrap();
+                        send_to(&transport_tx, packet.unwrap(), chunk_buf.into_inner().freeze()).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
                         tx.handle_timeout(timer);
@@ -102,7 +102,7 @@ fn run_client(
                 let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
                 let packet = collect_all_chunks(&tx, &mut chunk_buf).await;
 
-                send_to(&transport_tx, packet, chunk_buf.into_inner().freeze())
+                send_to(&transport_tx, packet.unwrap(), chunk_buf.into_inner().freeze())
                     .await
                     .unwrap();
             }
@@ -194,7 +194,7 @@ fn run_server(
                 let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
                 tokio::select! {
                     packet = collect_all_chunks(&tx, &mut chunk_buf) => {
-                        send_to(&transport_tx, packet, chunk_buf.into_inner().freeze()).await.unwrap();
+                        send_to(&transport_tx, packet.unwrap(), chunk_buf.into_inner().freeze()).await.unwrap();
                     }
                     _ = tokio::time::sleep(timeout) => {
                         tx.handle_timeout(timer);
@@ -204,7 +204,7 @@ fn run_server(
                 let mut chunk_buf = BytesMut::with_capacity(PMTU - 100).limit(PMTU - 100);
                 let packet = collect_all_chunks(&tx, &mut chunk_buf).await;
 
-                send_to(&transport_tx, packet, chunk_buf.into_inner().freeze())
+                send_to(&transport_tx, packet.unwrap(), chunk_buf.into_inner().freeze())
                     .await
                     .unwrap();
             }
@@ -216,13 +216,13 @@ fn run_server(
 async fn collect_all_chunks<FakeContent: FakeAddr>(
     tx: &Arc<AssociationTx<FakeContent>>,
     chunks: &mut impl BufMut,
-) -> Packet {
-    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut()).await;
+) -> Result<Packet, ()> {
+    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut()).await?;
     chunk.serialize(chunks);
-    while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()) {
+    while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()).some() {
         chunk.serialize(chunks);
     }
-    packet
+    Ok(packet)
 }
 
 async fn send_to(

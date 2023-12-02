@@ -8,7 +8,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
-    assoc::{PollDataError, PollDataResult, SendError, SendErrorKind},
+    assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind},
     packet::{Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
@@ -237,23 +237,31 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn poll_chunk_to_send(&self) -> (Packet, Chunk<FakeContent>) {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            if let Some(chunk) = wrapped.poll_signal_to_send(1024).or_else(|| {
+            match wrapped.poll_signal_to_send(1024).or_else(|| {
                 wrapped
                     .poll_data_to_send(1024, Instant::now())
                     .map(Chunk::Data)
             }) {
-                return (wrapped.packet_header(), chunk);
-            } else if let Some(timeout) = wrapped.next_timeout() {
-                let res = self
-                    .signal
-                    .wait_timeout(wrapped, Instant::now() - timeout.at())
-                    .unwrap();
-                wrapped = res.0;
-                if res.1.timed_out() {
-                    wrapped.handle_timeout(timeout);
+                PollSendResult::Some(chunk) => {
+                    return (wrapped.packet_header(), chunk);
                 }
-            } else {
-                wrapped = self.signal.wait(wrapped).unwrap();
+                PollSendResult::Closed => {
+                    panic!("Closed");
+                }
+                PollSendResult::None => {
+                    if let Some(timeout) = wrapped.next_timeout() {
+                        let res = self
+                            .signal
+                            .wait_timeout(wrapped, Instant::now() - timeout.at())
+                            .unwrap();
+                        wrapped = res.0;
+                        if res.1.timed_out() {
+                            wrapped.handle_timeout(timeout);
+                        }
+                    } else {
+                        wrapped = self.signal.wait(wrapped).unwrap();
+                    }
+                }
             }
         }
     }

@@ -9,7 +9,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
-    assoc::{PollDataError, PollDataResult, SendError, SendErrorKind, Timer},
+    assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind, Timer},
     packet::{Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
@@ -357,31 +357,42 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn poll_chunk_to_send(
         self: &Arc<AssociationTx<FakeContent>>,
         limit: usize,
-    ) -> impl Future<Output = (Packet, Chunk<FakeContent>)> {
+    ) -> impl Future<Output = Result<(Packet, Chunk<FakeContent>), ()>> {
         struct PollFuture<FakeContent: FakeAddr> {
             tx: Arc<AssociationTx<FakeContent>>,
             limit: usize,
         }
 
         impl<FakeContent: FakeAddr> Future for PollFuture<FakeContent> {
-            type Output = (Packet, Chunk<FakeContent>);
+            type Output = Result<(Packet, Chunk<FakeContent>), ()>;
 
             fn poll(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.tx.wrapped.lock().unwrap();
-                if let Some(chunk) = AssociationTx::try_poll_any_chunk(&mut wrapped.tx, self.limit)
-                {
-                    if let Chunk::Data(_) = chunk {
+                let poll_result = AssociationTx::try_poll_any_chunk(&mut wrapped.tx, self.limit)
+                    .map(|chunk| (wrapped.tx.packet_header(), chunk));
+                match poll_result {
+                    PollSendResult::Some(chunk) => {
+                        if let Chunk::Data(_) = &chunk.1 {
+                            for waker in wrapped.send_wakers.drain(..) {
+                                waker.wake();
+                            }
+                        }
+                        std::task::Poll::Ready(Ok(chunk))
+                    }
+                    PollSendResult::None => {
+                        wrapped.poll_wakers.push(cx.waker().to_owned());
+                        std::task::Poll::Pending
+                    }
+                    PollSendResult::Closed => {
                         for waker in wrapped.send_wakers.drain(..) {
                             waker.wake();
                         }
+
+                        std::task::Poll::Ready(Err(()))
                     }
-                    std::task::Poll::Ready((wrapped.tx.packet_header(), chunk))
-                } else {
-                    wrapped.poll_wakers.push(cx.waker().to_owned());
-                    std::task::Poll::Pending
                 }
             }
         }
@@ -395,7 +406,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     fn try_poll_any_chunk(
         tx: &mut crate::assoc::AssociationTx<FakeContent>,
         limit: usize,
-    ) -> Option<Chunk<FakeContent>> {
+    ) -> PollSendResult<Chunk<FakeContent>> {
         tx.poll_signal_to_send(limit)
             .or_else(|| tx.poll_data_to_send(limit, Instant::now()).map(Chunk::Data))
     }
@@ -403,7 +414,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn try_poll_chunk_to_send(
         self: &Arc<AssociationTx<FakeContent>>,
         limit: usize,
-    ) -> Option<(Packet, Chunk<FakeContent>)> {
+    ) -> PollSendResult<(Packet, Chunk<FakeContent>)> {
         let mut wrapped = self.wrapped.lock().unwrap();
         Self::try_poll_any_chunk(&mut wrapped.tx, limit)
             .map(|chunk| (wrapped.tx.packet_header(), chunk))
