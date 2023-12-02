@@ -221,7 +221,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
             }
             if remove {
                 // TODO notify sctp about this
-                self.assocs.remove(&id);
+                Self::remove_assoc(&mut self.assocs, id);
             }
         }
 
@@ -253,8 +253,20 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
             }
             if remove {
                 // TODO notify sctp about this
-                self.assocs.remove(&id);
+                Self::remove_assoc(&mut self.assocs, id);
             }
+        }
+    }
+
+    fn remove_assoc(assocs: &mut HashMap<AssocId, Association<FakeContent>>, id: AssocId) {
+        if let Some(assoc) = assocs.remove(&id) {
+            let mut rx = assoc.rx.wrapped.lock().unwrap();
+            rx.recv_wakers
+                .iter_mut()
+                .for_each(|(_, v)| v.drain(..).for_each(Waker::wake));
+            let mut tx = assoc.tx.wrapped.lock().unwrap();
+            tx.send_wakers.drain(..).for_each(Waker::wake);
+            tx.poll_wakers.drain(..).for_each(Waker::wake);
         }
     }
 }
