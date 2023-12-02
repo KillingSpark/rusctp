@@ -250,7 +250,9 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 self.shutdown_state = Some(ShutdownState::AbortReceived);
             }
             TxNotification::Shutdown => {
-                self.shutdown_state = Some(ShutdownState::TryingTo);
+                if self.shutdown_state.is_none() {
+                    self.shutdown_state = Some(ShutdownState::TryingTo);
+                }
             }
             TxNotification::PeerShutdown => {
                 self.shutdown_state = Some(ShutdownState::ShutdownReceived);
@@ -432,6 +434,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     if self.resend_queue.is_empty() && self.out_queue.is_empty() {
                         self.shutdown_state = Some(ShutdownState::ShutdownSent);
                         // TODO monitor sacks we send so we know which tsn we have sen last
+                        eprintln!("Send shutdown");
                         PollSendResult::Some(Chunk::ShutDown(Tsn(0)))
                     } else {
                         PollSendResult::None
@@ -519,8 +522,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 
     #[allow(dead_code)]
     fn print_state(&self) {
-        if self.out_queue.is_empty() {
-            eprintln!(
+        eprintln!(
                 "No send: resend_queue: {:2}, in_flight: {:6}, out_queue: {:4}, out_buffered: {:8}, peer_rcv_wnd: {:8}, free_rcv_wnd: {:8}, cwnd: {:8} cng_state: {:?}",
                 self.resend_queue.len(),
                 self.current_in_flight,
@@ -531,7 +533,6 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 self.primary_congestion.cwnd,
                 self.primary_congestion.state
             );
-        }
     }
 
     // Collect next chunk if it would still fit inside the limit
@@ -541,9 +542,12 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         now: Instant,
     ) -> PollSendResult<DataChunk> {
         let x = self._poll_data_to_send(data_limit, now);
+        //eprintln!("Poll data {:?}", self.shutdown_state);
         if x.is_none() || x.is_err() {
             self.assert_invariants();
-            //self.print_state();
+            if self.out_queue.is_empty() {
+                //self.print_state();
+            }
         }
         x
     }
@@ -594,13 +598,17 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 
                 // before sending new packets we need to check the peers receive window
                 if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
+                    //eprintln!("Rcv window");
+                    return PollSendResult::None;
+                }
+
+                if self.current_in_flight > self.primary_congestion.cwnd {
+                    //eprintln!("Cwnd window");
                     return PollSendResult::None;
                 }
 
                 // check if we can just send the next chunk entirely or if we need to fragment
-                let packet = if front_buf_len < data_limit
-                    && self.current_in_flight < self.primary_congestion.cwnd
-                {
+                let packet = if front_buf_len < data_limit {
                     let Some(mut packet) = self.out_queue.pop_front() else {
                         return PollSendResult::None;
                     };

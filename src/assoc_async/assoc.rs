@@ -149,6 +149,10 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         self.inner.lock().unwrap().done = true;
     }
 
+    pub fn has_assocs_left(&self) -> bool {
+        !self.inner.lock().unwrap().assocs.is_empty()
+    }
+
     pub fn next_send_immediate(
         &self,
     ) -> impl Future<Output = (TransportAddress<FakeContent>, Packet, Chunk<FakeContent>)> {

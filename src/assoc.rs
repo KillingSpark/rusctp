@@ -65,6 +65,7 @@ impl<FakeContent: FakeAddr> Association<FakeContent> {
     }
 }
 
+#[derive(Debug)]
 pub enum ShutdownState {
     TryingTo,
     ShutdownSent,

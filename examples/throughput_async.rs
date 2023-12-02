@@ -127,9 +127,10 @@ fn run_client(
         ctx.network_send_loop(tx.clone());
         ctx.send_data_loop(tx.clone());
 
-        // Wait for singal to shut down
+        // Wait for signal to shut down
         let _ = signal.recv().await;
         tx.initiate_shutdown();
+
         stop_sctp_loops.send(()).unwrap();
     });
     runtime
@@ -180,11 +181,10 @@ struct Context {
 
 impl Context {
     fn sctp_network_loops(&self) -> tokio::sync::broadcast::Sender<()> {
-        let (signal_tx, mut signal1) = tokio::sync::broadcast::channel(1);
-        let mut signal2 = signal_tx.subscribe();
+        let (signal_tx, mut signal) = tokio::sync::broadcast::channel(1);
         let sctp = self.sctp.clone();
         let socket = self.socket.clone();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     (addr, packet, chunk) = sctp.next_send_immediate() => {
@@ -192,18 +192,16 @@ impl Context {
                             send_chunk(&socket, addr, packet, chunk).await.unwrap();
                         }
                     }
-                    _ = signal1.recv() => {
-                        break;
-                    }
                 }
             }
-            eprintln!("Left sctp send immediate loop");
-        });
+        })
+        .abort_handle();
 
         let sctp = self.sctp.clone();
         let socket = self.socket.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; PMTU];
+            let mut want_to_shutdown = false;
             loop {
                 tokio::select! {
                     recv = socket.recv_from(&mut buf) => {
@@ -212,16 +210,21 @@ impl Context {
                                 Bytes::copy_from_slice(&buf[..size]),
                                 TransportAddress::Fake(addr),
                             );
+                            if want_to_shutdown && !sctp.has_assocs_left() {
+                                break;
+                            }
                         } else {
                             break;
                         }
                     }
-                    _ = signal2.recv() => {
-                        break;
+                    _ = signal.recv() => {
+                        want_to_shutdown = true;
                     }
                 }
             }
             eprintln!("Left network receive loop");
+            handle.abort();
+            eprintln!("Aborted the network receive loop");
         });
         signal_tx
     }
