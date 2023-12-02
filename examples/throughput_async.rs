@@ -1,8 +1,4 @@
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rand::RngCore;
@@ -17,33 +13,70 @@ use tokio::{net::UdpSocket, runtime::Runtime};
 fn main() {
     let mut args = std::env::args();
     args.next();
-    let _rt_server;
-    let _rt_client;
+    let mut rt_server = None;
+    let mut rt_client = None;
+
+    let (signal_tx, signal_rx) = tokio::sync::broadcast::channel(1);
 
     let mode = args.next();
     match mode.as_ref().map(|x| x.as_str()) {
         Some("client") => {
-            let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
-            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
-            _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+            let client_addr = args
+                .next()
+                .unwrap_or("127.0.0.1:1338".to_owned())
+                .parse()
+                .unwrap();
+            let server_addr = args
+                .next()
+                .unwrap_or("127.0.0.1:1337".to_owned())
+                .parse()
+                .unwrap();
+            rt_client = Some(run_client(client_addr, server_addr, signal_rx));
         }
         Some("server") => {
-            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
-            _rt_server = run_server(server_addr.parse().unwrap());
+            let server_addr = args
+                .next()
+                .unwrap_or("127.0.0.1:1337".to_owned())
+                .parse()
+                .unwrap();
+            rt_server = Some(run_server(server_addr, signal_rx));
         }
         unknown => {
             eprintln!("{unknown:?}");
 
-            let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
-            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
-            _rt_server = run_server(server_addr.parse().unwrap());
-            _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
+            let client_addr = args
+                .next()
+                .unwrap_or("127.0.0.1:1338".to_owned())
+                .parse()
+                .unwrap();
+            let server_addr = args
+                .next()
+                .unwrap_or("127.0.0.1:1337".to_owned())
+                .parse()
+                .unwrap();
+            rt_server = Some(run_server(server_addr, signal_tx.subscribe()));
+            rt_client = Some(run_client(client_addr, server_addr, signal_rx));
         }
     }
 
-    loop {
-        std::thread::sleep(Duration::from_secs(1000));
-    }
+    let signal_wait_rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    signal_wait_rt.block_on(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        signal_tx.send(()).unwrap();
+
+        tokio::signal::ctrl_c().await.unwrap();
+        eprintln!("Got second ctrl-c, do harsh shutdown");
+
+        if let Some(rt_client) = rt_client {
+            rt_client.shutdown_background();
+        }
+        if let Some(rt_server) = rt_server {
+            rt_server.shutdown_background();
+        }
+    });
 }
 
 const PMTU: usize = 64_000;
@@ -60,7 +93,11 @@ fn make_settings() -> Settings {
     }
 }
 
-fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> Runtime {
+fn run_client(
+    client_addr: SocketAddr,
+    server_addr: SocketAddr,
+    mut signal: tokio::sync::broadcast::Receiver<()>,
+) -> Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
@@ -87,12 +124,16 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> Runtime {
         ctx.network_send_loop(tx.clone());
         ctx.send_data_loop(tx.clone());
 
-        //tx.initiate_shutdown();
+        let _ = signal.recv().await;
+        tx.initiate_shutdown();
     });
     runtime
 }
 
-fn run_server(server_addr: SocketAddr) -> tokio::runtime::Runtime {
+fn run_server(
+    server_addr: SocketAddr,
+    mut signal: tokio::sync::broadcast::Receiver<()>,
+) -> tokio::runtime::Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
@@ -108,12 +149,17 @@ fn run_server(server_addr: SocketAddr) -> tokio::runtime::Runtime {
         ctx.sctp_network_loops();
 
         loop {
-            let assoc = ctx.sctp.accept().await;
-            eprintln!("Server got assoc");
-            let (tx, rx) = assoc.split();
-
-            ctx.receive_data_loop(rx);
-            ctx.network_send_loop(tx.clone());
+            tokio::select! {
+                assoc = ctx.sctp.accept() => {
+                    eprintln!("Server got assoc");
+                    let (tx, rx) = assoc.split();
+                    ctx.receive_data_loop(rx);
+                    ctx.network_send_loop(tx.clone());
+                }
+                _ = signal.recv() => {
+                    // TODO shutdown server
+                }
+            }
         }
     });
     runtime
