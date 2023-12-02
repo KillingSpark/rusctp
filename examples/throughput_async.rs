@@ -23,8 +23,8 @@ fn main() {
     let mode = args.next();
     match mode.as_ref().map(|x| x.as_str()) {
         Some("client") => {
-            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
             let client_addr = args.next().unwrap_or("127.0.0.1:1338".to_owned());
+            let server_addr = args.next().unwrap_or("127.0.0.1:1337".to_owned());
             _rt_client = run_client(client_addr.parse().unwrap(), server_addr.parse().unwrap());
         }
         Some("server") => {
@@ -48,6 +48,76 @@ fn main() {
 
 const PMTU: usize = 64_000;
 const PRINT_EVERY_X_BTES: u64 = 1_000_000_000;
+
+fn make_settings() -> Settings {
+    Settings {
+        cookie_secret: b"oh boy a secret string".to_vec(),
+        incoming_streams: 10,
+        outgoing_streams: 10,
+        in_buffer_limit: 1000 * PMTU,
+        out_buffer_limit: 1000 * PMTU,
+        pmtu: PMTU,
+    }
+}
+
+fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> Runtime {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    let port = rand::thread_rng().next_u32() as u16;
+    let sctp = Arc::new(Sctp::new(make_settings()));
+
+    runtime.spawn(async move {
+        let socket = Arc::new(UdpSocket::bind(client_addr).await.unwrap());
+
+        let ctx = Context { sctp, socket };
+
+        ctx.sctp_network_loops();
+
+        let assoc = ctx
+            .sctp
+            .connect(TransportAddress::Fake(server_addr), port, 200)
+            .await;
+        eprintln!("Client got assoc");
+        let (tx, rx) = assoc.split();
+
+        ctx.receive_data_loop(rx);
+        ctx.network_send_loop(tx.clone());
+        ctx.send_data_loop(tx.clone());
+
+        //tx.initiate_shutdown();
+    });
+    runtime
+}
+
+fn run_server(server_addr: SocketAddr) -> tokio::runtime::Runtime {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    let sctp = Arc::new(Sctp::new(make_settings()));
+
+    runtime.spawn(async move {
+        let socket = Arc::new(UdpSocket::bind(server_addr).await.unwrap());
+
+        let ctx = Context { sctp, socket };
+
+        ctx.sctp_network_loops();
+
+        loop {
+            let assoc = ctx.sctp.accept().await;
+            eprintln!("Server got assoc");
+            let (tx, rx) = assoc.split();
+
+            ctx.receive_data_loop(rx);
+            ctx.network_send_loop(tx.clone());
+        }
+    });
+    runtime
+}
 
 struct Context {
     sctp: Arc<Sctp<SocketAddr>>,
@@ -165,79 +235,6 @@ impl Context {
             }
         });
     }
-}
-
-fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> Runtime {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap();
-    let port = rand::thread_rng().next_u32() as u16;
-    let sctp = Arc::new(Sctp::new(Settings {
-        cookie_secret: b"oh boy a secret string".to_vec(),
-        incoming_streams: 10,
-        outgoing_streams: 10,
-        in_buffer_limit: 1000 * PMTU,
-        out_buffer_limit: 1000 * PMTU,
-        pmtu: PMTU,
-    }));
-
-    runtime.spawn(async move {
-        let socket = Arc::new(UdpSocket::bind(client_addr).await.unwrap());
-
-        let ctx = Context { sctp, socket };
-
-        ctx.sctp_network_loops();
-
-        let assoc = ctx
-            .sctp
-            .connect(TransportAddress::Fake(server_addr), port, 200)
-            .await;
-        eprintln!("Client got assoc");
-        let (tx, rx) = assoc.split();
-
-        ctx.receive_data_loop(rx);
-        ctx.network_send_loop(tx.clone());
-        ctx.send_data_loop(tx.clone());
-
-        //tx.initiate_shutdown();
-    });
-    runtime
-}
-
-fn run_server(server_addr: SocketAddr) -> tokio::runtime::Runtime {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .unwrap();
-    let sctp = Arc::new(Sctp::new(Settings {
-        cookie_secret: b"oh boy a secret string".to_vec(),
-        incoming_streams: 10,
-        outgoing_streams: 10,
-        in_buffer_limit: 100 * PMTU,
-        out_buffer_limit: 100 * PMTU,
-        pmtu: PMTU,
-    }));
-
-    runtime.spawn(async move {
-        let socket = Arc::new(UdpSocket::bind(server_addr).await.unwrap());
-
-        let ctx = Context { sctp, socket };
-
-        ctx.sctp_network_loops();
-
-        loop {
-            let assoc = ctx.sctp.accept().await;
-            eprintln!("Server got assoc");
-            let (tx, rx) = assoc.split();
-
-            ctx.receive_data_loop(rx);
-            ctx.network_send_loop(tx.clone());
-        }
-    });
-    runtime
 }
 
 async fn collect_all_chunks(

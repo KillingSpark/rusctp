@@ -139,6 +139,7 @@ struct WaitCookieAck<FakeContent: FakeAddr> {
     peer_arwnd: u32,
 }
 
+#[derive(Clone)]
 pub struct Settings {
     pub cookie_secret: Vec<u8>,
     pub incoming_streams: u16,
