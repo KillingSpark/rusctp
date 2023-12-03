@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     future::Future,
     sync::{Arc, Mutex},
-    task::Waker,
+    task::{Waker, Poll},
     time::Instant,
 };
 
@@ -21,7 +21,6 @@ pub struct Sctp<FakeContent: FakeAddr> {
 struct InnerSctp<FakeContent: FakeAddr> {
     sctp: crate::Sctp<FakeContent>,
     assocs: HashMap<AssocId, Association<FakeContent>>,
-    done: bool,
     ready_assocs: VecDeque<Association<FakeContent>>,
     new_assoc_wakers: Vec<Waker>,
     send_immediate_wakers: Vec<Waker>,
@@ -52,6 +51,7 @@ struct InnerTx<FakeContent: FakeAddr> {
     tx: crate::assoc::AssociationTx<FakeContent>,
     send_wakers: Vec<Waker>,
     poll_wakers: Vec<Waker>,
+    shutdown_wakers: Vec<Waker>,
 }
 
 pub struct AssociationRx<FakeContent: FakeAddr> {
@@ -69,7 +69,6 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         Self {
             inner: Arc::new(Mutex::new(InnerSctp {
                 sctp: crate::Sctp::new(settings),
-                done: false,
                 assocs: HashMap::new(),
                 ready_assocs: VecDeque::new(),
                 new_assoc_wakers: Vec::new(),
@@ -145,8 +144,11 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         }
     }
 
-    pub fn kill(&self) {
-        self.inner.lock().unwrap().done = true;
+    pub fn shutdown_all_connections(&self) {
+        let inner = self.inner.lock().unwrap();
+        inner.assocs.values().for_each(|assoc| {
+            assoc.tx.initiate_shutdown();
+        })
     }
 
     pub fn has_assocs_left(&self) -> bool {
@@ -193,6 +195,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
                     tx,
                     send_wakers: vec![],
                     poll_wakers: vec![],
+                    shutdown_wakers: vec![],
                 }),
             });
             let assoc = Association {
@@ -271,6 +274,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
             let mut tx = assoc.tx.wrapped.lock().unwrap();
             tx.send_wakers.drain(..).for_each(Waker::wake);
             tx.poll_wakers.drain(..).for_each(Waker::wake);
+            tx.shutdown_wakers.drain(..).for_each(Waker::wake);
         }
     }
 }
@@ -350,6 +354,26 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 
     pub fn shutdown_complete(&self) -> bool {
         self.wrapped.lock().unwrap().tx.shutdown_complete()
+    }
+
+    pub fn await_shutdown(self: &Arc<AssociationTx<FakeContent>>) -> impl Future<Output = ()> {
+        struct WaitForShutdownFuture<FakeContent: FakeAddr> {
+            tx: Arc<AssociationTx<FakeContent>>,
+        }
+
+        impl<FakeContent: FakeAddr> Future for WaitForShutdownFuture<FakeContent> {
+            type Output = ();
+            fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+                if self.tx.shutdown_complete() {
+                    Poll::Ready(())
+                } else {
+                    self.tx.wrapped.lock().unwrap().shutdown_wakers.push(cx.waker().to_owned());
+                    Poll::Pending
+                }
+            }
+        } 
+
+        WaitForShutdownFuture { tx: self.clone() }
     }
 
     pub fn initiate_shutdown(&self) {

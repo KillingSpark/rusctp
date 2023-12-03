@@ -71,68 +71,80 @@ fn main() {
         .build()
         .unwrap();
     let (rt_client, rt_server) = signal_wait_rt.block_on(async move {
-        tokio::signal::ctrl_c().await.unwrap();
-        signal_tx.send(()).unwrap();
-
-        let (client_runtime, client_handle) = if let Some(x) = rt_client {
+        let (client_runtime, mut client_handle) = if let Some(x) = rt_client {
             (Some(x.0), Some(x.1))
         } else {
             (None, None)
         };
-        let (server_runtime, server_handle) = if let Some(x) = rt_server {
+        let (server_runtime, mut server_handle) = if let Some(x) = rt_server {
             (Some(x.0), Some(x.1))
         } else {
             (None, None)
         };
 
-        struct Join {
-            server_handle: Option<JoinHandle<()>>,
-            client_handle: Option<JoinHandle<()>>,
-        }
-        impl Future for Join {
-            type Output = ();
-
-            fn poll(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Self::Output> {
-                if let Some(handle) = self.server_handle.as_mut() {
-                    if Pin::new(handle).poll(cx).is_ready() {
-                        self.server_handle = None;
+        let mut signal_counter = 0;
+        loop {
+            let joined = Join {
+                server_handle: server_handle.as_mut(),
+                client_handle: client_handle.as_mut(),
+            };
+            tokio::select! {
+                _ = joined => {
+                    break (client_runtime, server_runtime);
+                },
+                _ = tokio::signal::ctrl_c() => {
+                    if signal_counter == 0 {
+                        eprintln!("Got first signal");
+                        signal_counter += 1;
+                        signal_tx.send(()).unwrap();
+                    } else {
+                        eprintln!("Got second ctrl-c, do harsh shutdown");
+                        if let Some(rt_client) = client_runtime {
+                            rt_client.shutdown_background();
+                        }
+                        if let Some(rt_server) = server_runtime {
+                            rt_server.shutdown_background();
+                        }
+                        break (None, None);
                     }
                 }
-
-                if let Some(handle) = self.client_handle.as_mut() {
-                    if Pin::new(handle).poll(cx).is_ready() {
-                        self.client_handle = None;
-                    }
-                }
-
-                if self.server_handle.is_none() && self.client_handle.is_none() {
-                    Poll::Ready(())
-                } else {
-                    Poll::Pending
-                }
-            }
-        }
-        tokio::select! {
-            _ = Join{server_handle, client_handle} => {
-                (client_runtime, server_runtime)
-            },
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Got second ctrl-c, do harsh shutdown");
-                if let Some(rt_client) = client_runtime {
-                    rt_client.shutdown_background();
-                }
-                if let Some(rt_server) = server_runtime {
-                    rt_server.shutdown_background();
-                }
-                (None, None)
             }
         }
     });
-
+    drop(rt_client);
+    drop(rt_server);
     eprintln!("Exit");
+}
+
+struct Join<'a> {
+    server_handle: Option<&'a mut JoinHandle<()>>,
+    client_handle: Option<&'a mut JoinHandle<()>>,
+}
+impl Future for Join<'_> {
+    type Output = ();
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if let Some(handle) = self.server_handle.as_mut() {
+            if Pin::new(handle).poll(cx).is_ready() {
+                self.server_handle = None;
+            }
+        }
+
+        if let Some(handle) = self.client_handle.as_mut() {
+            if Pin::new(handle).poll(cx).is_ready() {
+                self.client_handle = None;
+            }
+        }
+
+        if self.server_handle.is_none() && self.client_handle.is_none() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
 }
 
 const PMTU: usize = 64_000;
@@ -180,12 +192,19 @@ fn run_client(
         ctx.send_data_loop(tx.clone());
 
         // Wait for signal to shut down
-        let _ = signal.recv().await;
-        eprintln!("Start client shutdown");
-        tx.initiate_shutdown();
+        tokio::select! {
+            _ = signal.recv() => {
+                eprintln!("Start client shutdown");
+                tx.initiate_shutdown();
+            }
+            _ = tx.await_shutdown() => {
+                eprintln!("Server shut down the connection");
+            }
+        }
 
         stop_sctp_loops.send(()).unwrap();
         done_signal.recv().await;
+
         eprintln!("Leave client");
     });
     (runtime, handle)
@@ -223,9 +242,12 @@ fn run_server(
             }
         }
 
+        eprintln!("Start server shutdown");
+
+        ctx.sctp.shutdown_all_connections();
         stop_sctp_loops.send(()).unwrap();
         done_signal.recv().await;
-        // TODO cleanup all connections
+
         eprintln!("Leave server");
     });
     (runtime, handle)
@@ -266,6 +288,9 @@ impl Context {
             let mut buf = [0u8; PMTU];
             let mut want_to_shutdown = false;
             loop {
+                if want_to_shutdown && !sctp.has_assocs_left() {
+                    break;
+                }
                 tokio::select! {
                     recv = socket.recv_from(&mut buf) => {
                         if let Ok((size, addr)) = recv {
@@ -273,9 +298,6 @@ impl Context {
                                 Bytes::copy_from_slice(&buf[..size]),
                                 TransportAddress::Fake(addr),
                             );
-                            if want_to_shutdown && !sctp.has_assocs_left() {
-                                break;
-                            }
                         } else {
                             break;
                         }
