@@ -8,7 +8,7 @@ use std::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use rusctp::{
-    assoc::{Association, AssociationTx, PollDataResult, PollSendResult, timeouts::Timer},
+    assoc::{timeouts::Timer, Association, AssociationTx, PollDataResult, PollSendResult},
     packet::{Chunk, Packet},
     AssocId, FakeAddr, Sctp, Settings, TransportAddress,
 };

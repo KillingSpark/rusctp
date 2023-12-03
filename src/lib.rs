@@ -18,7 +18,8 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
     hash::Hash,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6}, time::Instant,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    time::Instant,
 };
 
 pub trait FakeAddr:
@@ -185,7 +186,12 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         }
     }
 
-    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress<FakeContent>, now: Instant) {
+    pub fn receive_data(
+        &mut self,
+        mut data: Bytes,
+        from: TransportAddress<FakeContent>,
+        now: Instant,
+    ) {
         let Some(packet) = Packet::parse(&data) else {
             return;
         };

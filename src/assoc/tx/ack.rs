@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use crate::{FakeAddr, packet::{sack::SelectiveAck, Tsn}};
+use crate::{
+    packet::{sack::SelectiveAck, Tsn},
+    FakeAddr,
+};
 
 use super::AssociationTx;
 
