@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use bytes::{Buf, Bytes};
 use rand::RngCore;
 
@@ -133,6 +135,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         packet: &Packet,
         data: &mut Bytes,
         from: TransportAddress<FakeContent>,
+        now: Instant,
     ) -> HandleSpecialResult<AssocId> {
         if !Chunk::<FakeContent>::is_cookie_ack(data) {
             return HandleSpecialResult::NotRecognized;
@@ -177,6 +180,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
                 peer_arwnd: half_open.peer_arwnd,
                 pmtu: self.settings.pmtu,
             },
+            now,
         );
         HandleSpecialResult::Handled(assoc_id)
     }
@@ -273,6 +277,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         packet: &Packet,
         data: &mut Bytes,
         from: TransportAddress<FakeContent>,
+        now: Instant,
     ) -> HandleSpecialResult<AssocId> {
         if !Chunk::<FakeContent>::is_cookie_echo(data) {
             return HandleSpecialResult::NotRecognized;
@@ -321,6 +326,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
                 peer_arwnd: cookie.peer_arwnd,
                 pmtu: self.settings.pmtu,
             },
+            now,
         );
         self.tx_notifications
             .push_back((assoc_id, TxNotification::Send(Chunk::StateCookieAck)));
@@ -336,6 +342,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         peer_initial_tsn: u32,
         incoming_streams: u16,
         tx_settings: AssocTxSettings<FakeContent>,
+        now: Instant,
     ) -> AssocId {
         let assoc_id = self.next_assoc_id();
         self.assoc_infos.insert(
@@ -362,6 +369,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
             incoming_streams,
             self.settings.in_buffer_limit,
             tx_settings,
+            now,
         ));
         assoc_id
     }

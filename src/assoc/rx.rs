@@ -111,7 +111,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             }
             Chunk::SAck(sack) => self
                 .tx_notifications
-                .push_back(TxNotification::SAck((sack, now))),
+                .push_back(TxNotification::SAck(sack, now)),
             Chunk::Abort { .. } => {
                 self.shutdown_state = Some(ShutdownState::AbortReceived);
                 self.tx_notifications.push_back(TxNotification::Abort)
@@ -130,6 +130,14 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                 self.shutdown_state = Some(ShutdownState::Complete);
                 self.tx_notifications
                     .push_back(TxNotification::PeerShutdownComplete);
+            }
+            Chunk::HeartBeat(data) => {
+                self.tx_notifications
+                    .push_back(TxNotification::Send(Chunk::HeartBeatAck(data)));
+            }
+            Chunk::HeartBeatAck(ack) => {
+                self.tx_notifications
+                    .push_back(TxNotification::HeartBeatAck(ack, now));
             }
             _ => {
                 todo!()

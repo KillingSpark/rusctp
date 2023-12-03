@@ -23,6 +23,7 @@ fn buffer_limits() {
             peer_arwnd: 10000000,
             pmtu: 10000,
         },
+        Instant::now(),
     );
     let send_ten_bytes = |tx: &mut AssociationTx<u64>| {
         tx.try_send_data(
@@ -84,7 +85,7 @@ fn buffer_limits() {
     ));
 
     tx.notification(
-        TxNotification::SAck((
+        TxNotification::SAck(
             SelectiveAck {
                 cum_tsn: packet.tsn,
                 a_rwnd: 1000000, // Whatever we just want to have a big receive window here
@@ -92,12 +93,12 @@ fn buffer_limits() {
                 duplicated_tsn: vec![],
             },
             std::time::Instant::now(),
-        )),
+        ),
         std::time::Instant::now(),
     );
     assert_eq!(tx.current_in_flight, 20);
     tx.notification(
-        TxNotification::SAck((
+        TxNotification::SAck(
             SelectiveAck {
                 cum_tsn: packet.tsn.increase(),
                 a_rwnd: 1000000, // Whatever we just want to have a big receive window here
@@ -105,7 +106,7 @@ fn buffer_limits() {
                 duplicated_tsn: vec![],
             },
             std::time::Instant::now(),
-        )),
+        ),
         std::time::Instant::now(),
     );
     assert_eq!(tx.current_in_flight, 10);
@@ -135,6 +136,7 @@ fn arwnd_limits() {
             peer_arwnd: 20,
             pmtu: 10000,
         },
+        Instant::now(),
     );
     let send_ten_bytes = |tx: &mut AssociationTx<u64>| {
         tx.try_send_data(
@@ -162,7 +164,7 @@ fn arwnd_limits() {
     assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
 
     tx.notification(
-        TxNotification::SAck((
+        TxNotification::SAck(
             SelectiveAck {
                 cum_tsn: Tsn(100), // Whatever we dont care about out buffer size here
                 a_rwnd: 20,
@@ -170,7 +172,7 @@ fn arwnd_limits() {
                 duplicated_tsn: vec![],
             },
             std::time::Instant::now(),
-        )),
+        ),
         std::time::Instant::now(),
     );
 
@@ -194,6 +196,7 @@ fn rto_timeout() {
             peer_arwnd: 20,
             pmtu: 10000,
         },
+        Instant::now(),
     );
     let send_ten_bytes = |tx: &mut AssociationTx<u64>| {
         tx.try_send_data(

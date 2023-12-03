@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::time::Duration;
 use std::{collections::VecDeque, time::Instant};
 
 use crate::packet::data::DataChunk;
@@ -11,6 +12,7 @@ use super::srtt::Srtt;
 use super::ShutdownState;
 
 mod congestion;
+mod timeouts;
 
 #[cfg(test)]
 mod tests;
@@ -45,6 +47,7 @@ pub struct AssociationTx<FakeContent: FakeAddr> {
     rto_timer: Option<Timer>,
     shutdown_rto_timer: Option<Timer>,
     heartbeat_timer: Option<Timer>,
+    heartbeats_unacked: usize,
 
     shutdown_state: Option<ShutdownState>,
 }
@@ -79,12 +82,13 @@ struct PerStreamInfo {
 #[derive(Debug)]
 pub enum TxNotification<FakeContent: FakeAddr> {
     Send(Chunk<FakeContent>),
-    SAck((SelectiveAck, Instant)),
+    SAck(SelectiveAck, Instant),
     Abort,
     Shutdown,
     PeerShutdown,
     PeerShutdownAck,
     PeerShutdownComplete,
+    HeartBeatAck(Bytes, Instant),
     _PrimaryPathChanged(TransportAddress<FakeContent>),
 }
 
@@ -210,7 +214,7 @@ impl<T> From<Option<T>> for PollSendResult<T> {
 }
 
 impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
-    pub(crate) fn new(id: AssocId, settings: AssocTxSettings<FakeContent>) -> Self {
+    pub(crate) fn new(id: AssocId, settings: AssocTxSettings<FakeContent>, now: Instant) -> Self {
         let AssocTxSettings {
             primary_path,
             peer_verification_tag,
@@ -252,8 +256,12 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             srtt: Srtt::new(),
             rto_timer: None,
             shutdown_rto_timer: None,
-            heartbeat_timer: None,
-            timer_ctr: 0,
+            heartbeat_timer: Some(Timer {
+                marker: 0,
+                at: now + Duration::from_millis(10),
+            }),
+            heartbeats_unacked: 0,
+            timer_ctr: 1,
             shutdown_state: None,
         }
     }
@@ -280,7 +288,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 self.send_next.push_back(chunk)
             }
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
-            TxNotification::SAck((sack, recv_at)) => self.handle_sack(sack, recv_at),
+            TxNotification::SAck(sack, recv_at) => self.handle_sack(sack, recv_at),
             TxNotification::Abort => {
                 self.shutdown_state = Some(ShutdownState::AbortReceived);
             }
@@ -312,6 +320,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             TxNotification::PeerShutdownComplete => {
                 self.shutdown_state = Some(ShutdownState::Complete);
             }
+            TxNotification::HeartBeatAck(data, now) => self.process_heartbeat_ack(data, now),
         }
     }
 
@@ -535,94 +544,6 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         minimum
     }
 
-    pub fn handle_timeout(&mut self, timeout: Timer) {
-        if let Some(current_timer) = self.rto_timer {
-            if current_timer.marker == timeout.marker {
-                self.handle_rto_timeout(timeout);
-            }
-        }
-        if let Some(current_timer) = self.shutdown_rto_timer {
-            if current_timer.marker == timeout.marker {
-                self.handle_shutdown_rto_timeout(timeout);
-            }
-        }
-        if let Some(current_timer) = self.heartbeat_timer {
-            if current_timer.marker == timeout.marker {
-                self.handle_heartbeat_timeout(timeout);
-            }
-        }
-    }
-
-    fn handle_heartbeat_timeout(&mut self, timeout: Timer) {
-        // TODO perform pmtu testing with this
-        // https://datatracker.ietf.org/doc/rfc8899/
-        self.send_next
-            .push_back(Chunk::HeartBeat(Bytes::from_static(&[])));
-        self.set_heartbeat_timeout(timeout.at)
-    }
-
-    fn handle_shutdown_rto_timeout(&mut self, timeout: Timer) {
-        match self.shutdown_state {
-            Some(ShutdownState::ShutdownSent) => {
-                self.send_next
-                    .push_back(Chunk::ShutDown(self.peer_last_acked_tsn));
-                self.set_shutdown_rto_timeout(timeout.at);
-            }
-            Some(ShutdownState::ShutdownAckSent) => {
-                self.send_next.push_back(Chunk::ShutDownAck);
-                self.set_shutdown_rto_timeout(timeout.at);
-            }
-            Some(ShutdownState::ShutdownReceived) => {}
-            Some(ShutdownState::TryingTo) => {}
-            Some(ShutdownState::Complete) => {}
-            Some(ShutdownState::AbortReceived) => {}
-            None => { /* Huh? */ }
-        }
-    }
-
-    fn handle_rto_timeout(&mut self, timeout: Timer) {
-        if self.resend_queue.is_empty() {
-            self.rto_timer = None;
-            return;
-        }
-        self.primary_congestion.rto_expired();
-        self.srtt.rto_expired();
-
-        self.resend_queue.iter_mut().for_each(|p| {
-            if !p.marked_for_retransmit && p.queued_at + self.srtt.rto_duration() <= timeout.at {
-                p.marked_for_retransmit = true;
-                p.queued_at = timeout.at;
-            }
-        });
-        self.set_rto_timeout(timeout.at);
-    }
-
-    fn set_heartbeat_timeout(&mut self, now: Instant) {
-        let at = now + self.srtt.rto_duration();
-        self.heartbeat_timer = Some(Timer {
-            at,
-            marker: self.timer_ctr,
-        });
-        self.timer_ctr = self.timer_ctr.wrapping_add(1);
-    }
-
-    fn set_rto_timeout(&mut self, now: Instant) {
-        let at = now + self.srtt.rto_duration();
-        self.rto_timer = Some(Timer {
-            at,
-            marker: self.timer_ctr,
-        });
-        self.timer_ctr = self.timer_ctr.wrapping_add(1);
-    }
-
-    fn set_shutdown_rto_timeout(&mut self, now: Instant) {
-        let at = now + self.srtt.rto_duration();
-        self.shutdown_rto_timer = Some(Timer {
-            at,
-            marker: self.timer_ctr,
-        });
-        self.timer_ctr = self.timer_ctr.wrapping_add(1);
-    }
 
     fn assert_invariants(&self) {
         assert_eq!(

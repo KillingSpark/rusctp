@@ -231,7 +231,7 @@ impl<FakeContent: FakeAddr> Context<FakeContent> {
         eprintln!("{} Handle packet from: {from:?}", self.logname);
         let fake_addr = self.known_addrs.get(&from).copied().unwrap();
         self.sctp
-            .receive_data(Bytes::copy_from_slice(data), fake_addr);
+            .receive_data(Bytes::copy_from_slice(data), fake_addr, Instant::now());
 
         if let Some(mut assoc) = self.sctp.new_assoc() {
             eprintln!("{} got a new association", self.logname);

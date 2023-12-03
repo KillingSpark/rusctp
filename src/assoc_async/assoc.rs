@@ -79,7 +79,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
 
     pub fn receive_data(&self, data: Bytes, from: TransportAddress<FakeContent>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.sctp.receive_data(data, from);
+        inner.sctp.receive_data(data, from, Instant::now());
         if inner.sctp.has_next_send_immediate() {
             inner.send_immediate_wakers.drain(..).for_each(Waker::wake);
         }

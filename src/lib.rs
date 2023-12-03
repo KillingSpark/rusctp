@@ -18,7 +18,7 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
     hash::Hash,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6}, time::Instant,
 };
 
 pub trait FakeAddr:
@@ -185,7 +185,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         }
     }
 
-    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress<FakeContent>) {
+    pub fn receive_data(&mut self, mut data: Bytes, from: TransportAddress<FakeContent>, now: Instant) {
         let Some(packet) = Packet::parse(&data) else {
             return;
         };
@@ -205,7 +205,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
 
         let mut new_assoc_id = None;
         // Either we have accepted a new association here
-        match self.handle_cookie_echo(&packet, &mut data, from) {
+        match self.handle_cookie_echo(&packet, &mut data, from, now) {
             HandleSpecialResult::Handled(id) => new_assoc_id = Some(id),
             HandleSpecialResult::Error => return,
             HandleSpecialResult::NotRecognized => { /* keep handling, this is allowed to carry data */
@@ -213,7 +213,7 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
         }
 
         // or here
-        match self.handle_cookie_ack(&packet, &mut data, from) {
+        match self.handle_cookie_ack(&packet, &mut data, from, now) {
             HandleSpecialResult::Handled(id) => new_assoc_id = Some(id),
             HandleSpecialResult::Error => return,
             HandleSpecialResult::NotRecognized => { /* keep handling, this is allowed to carry data */

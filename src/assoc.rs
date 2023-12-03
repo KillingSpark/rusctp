@@ -1,4 +1,6 @@
 pub mod rx;
+use std::time::Instant;
+
 pub use rx::*;
 
 pub mod tx;
@@ -23,11 +25,12 @@ impl<FakeContent: FakeAddr> Association<FakeContent> {
         num_in_streams: u16,
         in_buffer_limit: usize,
         tx_settings: AssocTxSettings<FakeContent>,
+        now: Instant,
     ) -> Self {
         Self {
             id,
             rx: AssociationRx::new(id, init_peer_tsn, num_in_streams, in_buffer_limit),
-            tx: AssociationTx::new(id, tx_settings),
+            tx: AssociationTx::new(id, tx_settings, now),
         }
     }
 

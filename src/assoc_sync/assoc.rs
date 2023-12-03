@@ -92,7 +92,7 @@ impl<
 
     pub fn receive_data(&self, data: Bytes, from: TransportAddress<FakeContent>) {
         self.with_inner(|inner| {
-            inner.sctp.receive_data(data, from);
+            inner.sctp.receive_data(data, from, Instant::now());
             inner.handle_notifications();
         });
         self.signal.notify_all();
