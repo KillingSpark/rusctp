@@ -60,7 +60,7 @@ fuzz_target!(|data: &[u8]| {
     }
 });
 
-fn decode(data: &[u8]) -> Option<(Packet, Vec<(Chunk, Bytes)>)> {
+fn decode(data: &[u8]) -> Option<(Packet, Vec<(Chunk<u64>, Bytes)>)> {
     let packet = Packet::parse(data)?;
 
     let mut data = Bytes::copy_from_slice(&data[4..]);
