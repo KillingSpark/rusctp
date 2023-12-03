@@ -60,18 +60,23 @@ impl<T: FakeAddr> AssociationTx<T> {
     }
 
     pub(super) fn handle_heartbeat_timeout(&mut self, timeout: Timer) {
-        // TODO perform pmtu testing with this
-        // https://datatracker.ietf.org/doc/rfc8899/
-        self.send_next
-            .push_back(Chunk::HeartBeat(Bytes::from_static(&[])));
+        if self.pmtu_probe.probe_in_flight() {
+            self.pmtu_probe.probe_timed_out();
+            self.heartbeats_unacked += 1;
+            // TODO we probably want to do something if heartbeats do not get answered repeatedly
+        } else {
+            static EMPTY_DATA: &[u8] = &[0u8; 1024 * 70];
+            static BYTES: Bytes = Bytes::from_static(EMPTY_DATA);
+            let probe_size = usize::min(self.pmtu_probe.next_probe_size(), BYTES.len());
+            self.send_next
+                .push_back(Chunk::HeartBeat(BYTES.slice(..probe_size)));
+        }
         self.set_heartbeat_timeout(timeout.at);
-        self.heartbeats_unacked += 1;
-        // TODO we probably want to do something if heartbeats do not get answered
     }
 
-    pub(super) fn process_heartbeat_ack(&mut self, _data: Bytes, now: Instant) {
-        // TODO pmtu checking?
+    pub(super) fn process_heartbeat_ack(&mut self, data: Bytes, now: Instant) {
         self.heartbeats_unacked = 0;
+        self.pmtu_probe.probe_success(data.len());
         self.set_heartbeat_timeout(now);
     }
 
@@ -112,7 +117,7 @@ impl<T: FakeAddr> AssociationTx<T> {
     }
 
     pub(super) fn set_heartbeat_timeout(&mut self, now: Instant) {
-        let at = now + self.srtt.rto_duration();
+        let at = self.pmtu_probe.next_probe(now);
         self.heartbeat_timer = Some(Timer {
             at,
             marker: self.timer_ctr,

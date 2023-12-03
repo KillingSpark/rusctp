@@ -7,6 +7,7 @@ use crate::packet::{Sequence, Tsn};
 use crate::{AssocId, Chunk, FakeAddr, Packet, TransportAddress};
 use bytes::{Buf, Bytes};
 
+use self::pmtu::PmtuProbe;
 use self::timeouts::Timer;
 
 use super::srtt::Srtt;
@@ -14,6 +15,7 @@ use super::ShutdownState;
 
 mod ack;
 mod congestion;
+mod pmtu;
 pub mod timeouts;
 
 #[cfg(test)]
@@ -50,6 +52,7 @@ pub struct AssociationTx<FakeContent: FakeAddr> {
     shutdown_rto_timer: Option<Timer>,
     heartbeat_timer: Option<Timer>,
     heartbeats_unacked: usize,
+    pmtu_probe: PmtuProbe,
 
     shutdown_state: Option<ShutdownState>,
 }
@@ -235,6 +238,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             #[cfg(test)]
             heartbeat_timer: None,
             heartbeats_unacked: 0,
+            pmtu_probe: PmtuProbe::new(),
             timer_ctr: 1,
             shutdown_state: None,
         }
@@ -368,6 +372,10 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             if front.serialized_size() <= limit {
                 self.send_next.pop_front().into()
             } else {
+                if let Chunk::HeartBeat(_) = front {
+                    self.send_next.pop_front();
+                    return self.poll_signal_to_send(limit, now);
+                }
                 PollSendResult::None
             }
         } else {
