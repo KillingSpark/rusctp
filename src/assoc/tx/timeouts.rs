@@ -2,9 +2,43 @@ use std::time::Instant;
 
 use bytes::Bytes;
 
-use crate::{FakeAddr, packet::Chunk, assoc::ShutdownState};
+use crate::{assoc::ShutdownState, packet::Chunk, FakeAddr};
 
-use super::{AssociationTx, Timer};
+use super::AssociationTx;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Timer {
+    marker: u64,
+    at: Instant,
+}
+
+impl Timer {
+    pub fn at(&self) -> Instant {
+        self.at
+    }
+    pub fn new(at: Instant, marker: u64) -> Self {
+        Self { at, marker }
+    }
+}
+
+impl Eq for Timer {}
+impl PartialEq for Timer {
+    fn eq(&self, other: &Self) -> bool {
+        self.at.eq(&other.at) && self.marker.eq(&other.marker)
+    }
+}
+
+impl PartialOrd for Timer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Self::cmp(self, other))
+    }
+}
+
+impl Ord for Timer {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.at.cmp(&other.at)
+    }
+}
 
 impl<T: FakeAddr> AssociationTx<T> {
     pub fn handle_timeout(&mut self, timeout: Timer) {

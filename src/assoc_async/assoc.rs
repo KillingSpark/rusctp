@@ -9,7 +9,7 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
-    assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind, Timer},
+    assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind, timeouts::Timer},
     packet::{Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
