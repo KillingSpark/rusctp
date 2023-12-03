@@ -1,6 +1,9 @@
 use std::{
+    future::Future,
     net::SocketAddr,
+    pin::Pin,
     sync::Arc,
+    task::Poll,
     time::{Duration, Instant},
 };
 
@@ -12,7 +15,7 @@ use rusctp::{
     packet::{Chunk, Packet},
     Settings, TransportAddress,
 };
-use tokio::{net::UdpSocket, runtime::Runtime};
+use tokio::{net::UdpSocket, runtime::Runtime, task::JoinHandle};
 
 fn main() {
     let mut args = std::env::args();
@@ -67,20 +70,69 @@ fn main() {
         .enable_all()
         .build()
         .unwrap();
-    signal_wait_rt.block_on(async move {
+    let (rt_client, rt_server) = signal_wait_rt.block_on(async move {
         tokio::signal::ctrl_c().await.unwrap();
         signal_tx.send(()).unwrap();
 
-        tokio::signal::ctrl_c().await.unwrap();
-        eprintln!("Got second ctrl-c, do harsh shutdown");
+        let (client_runtime, client_handle) = if let Some(x) = rt_client {
+            (Some(x.0), Some(x.1))
+        } else {
+            (None, None)
+        };
+        let (server_runtime, server_handle) = if let Some(x) = rt_server {
+            (Some(x.0), Some(x.1))
+        } else {
+            (None, None)
+        };
 
-        if let Some(rt_client) = rt_client {
-            rt_client.shutdown_background();
+        struct Join {
+            server_handle: Option<JoinHandle<()>>,
+            client_handle: Option<JoinHandle<()>>,
         }
-        if let Some(rt_server) = rt_server {
-            rt_server.shutdown_background();
+        impl Future for Join {
+            type Output = ();
+
+            fn poll(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Self::Output> {
+                if let Some(handle) = self.server_handle.as_mut() {
+                    if Pin::new(handle).poll(cx).is_ready() {
+                        self.server_handle = None;
+                    }
+                }
+
+                if let Some(handle) = self.client_handle.as_mut() {
+                    if Pin::new(handle).poll(cx).is_ready() {
+                        self.client_handle = None;
+                    }
+                }
+
+                if self.server_handle.is_none() && self.client_handle.is_none() {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            }
+        }
+        tokio::select! {
+            _ = Join{server_handle, client_handle} => {
+                (client_runtime, server_runtime)
+            },
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Got second ctrl-c, do harsh shutdown");
+                if let Some(rt_client) = client_runtime {
+                    rt_client.shutdown_background();
+                }
+                if let Some(rt_server) = server_runtime {
+                    rt_server.shutdown_background();
+                }
+                (None, None)
+            }
         }
     });
+
+    eprintln!("Exit");
 }
 
 const PMTU: usize = 64_000;
@@ -100,7 +152,7 @@ fn run_client(
     client_addr: SocketAddr,
     server_addr: SocketAddr,
     mut signal: tokio::sync::broadcast::Receiver<()>,
-) -> Runtime {
+) -> (Runtime, JoinHandle<()>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
@@ -109,12 +161,12 @@ fn run_client(
     let port = rand::thread_rng().next_u32() as u16;
     let sctp = Arc::new(Sctp::new(make_settings()));
 
-    runtime.spawn(async move {
+    let handle = runtime.spawn(async move {
         let socket = Arc::new(UdpSocket::bind(client_addr).await.unwrap());
 
         let ctx = Context { sctp, socket };
 
-        let stop_sctp_loops = ctx.sctp_network_loops();
+        let (stop_sctp_loops, mut done_signal) = ctx.sctp_network_loops();
 
         let assoc = ctx
             .sctp
@@ -129,17 +181,20 @@ fn run_client(
 
         // Wait for signal to shut down
         let _ = signal.recv().await;
+        eprintln!("Start client shutdown");
         tx.initiate_shutdown();
 
         stop_sctp_loops.send(()).unwrap();
+        done_signal.recv().await;
+        eprintln!("Leave client");
     });
-    runtime
+    (runtime, handle)
 }
 
 fn run_server(
     server_addr: SocketAddr,
     mut signal: tokio::sync::broadcast::Receiver<()>,
-) -> tokio::runtime::Runtime {
+) -> (Runtime, JoinHandle<()>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
         .enable_time()
@@ -147,12 +202,12 @@ fn run_server(
         .unwrap();
     let sctp = Arc::new(Sctp::new(make_settings()));
 
-    runtime.spawn(async move {
+    let handle = runtime.spawn(async move {
         let socket = Arc::new(UdpSocket::bind(server_addr).await.unwrap());
 
         let ctx = Context { sctp, socket };
 
-        let stop_sctp_loops = ctx.sctp_network_loops();
+        let (stop_sctp_loops, mut done_signal) = ctx.sctp_network_loops();
 
         loop {
             tokio::select! {
@@ -169,9 +224,11 @@ fn run_server(
         }
 
         stop_sctp_loops.send(()).unwrap();
+        done_signal.recv().await;
         // TODO cleanup all connections
+        eprintln!("Leave server");
     });
-    runtime
+    (runtime, handle)
 }
 
 struct Context {
@@ -180,8 +237,14 @@ struct Context {
 }
 
 impl Context {
-    fn sctp_network_loops(&self) -> tokio::sync::broadcast::Sender<()> {
+    fn sctp_network_loops(
+        &self,
+    ) -> (
+        tokio::sync::broadcast::Sender<()>,
+        tokio::sync::mpsc::Receiver<()>,
+    ) {
         let (signal_tx, mut signal) = tokio::sync::broadcast::channel(1);
+        let (signal_done_tx, signal_done_rx) = tokio::sync::mpsc::channel(1);
         let sctp = self.sctp.clone();
         let socket = self.socket.clone();
         let handle = tokio::spawn(async move {
@@ -225,8 +288,9 @@ impl Context {
             eprintln!("Left network receive loop");
             handle.abort();
             eprintln!("Aborted the network receive loop");
+            signal_done_tx.send(()).await.unwrap();
         });
-        signal_tx
+        (signal_tx, signal_done_rx)
     }
 
     fn network_send_loop(&self, tx: Arc<AssociationTx<SocketAddr>>) {
@@ -240,7 +304,6 @@ impl Context {
                 let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
                 if let Some(timer) = tx.next_timeout() {
                     let timeout = timer.at() - Instant::now();
-
                     tokio::select! {
                         packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
                             if let Ok(packet) = packet {
@@ -304,8 +367,11 @@ impl Context {
         tokio::spawn(async move {
             let mut bytes_ctr = 0u64;
             let mut start = std::time::Instant::now();
-            while !rx.shutdown_complete() {
-                let data = rx.recv_data(0).await.unwrap();
+            loop {
+                let Ok(data) = rx.recv_data(0).await else {
+                    eprintln!("Receive errored");
+                    break;
+                };
                 bytes_ctr += data.len() as u64;
                 if start.elapsed() >= Duration::from_secs(1) {
                     let bytes_per_sec = (1_000_000 * bytes_ctr)

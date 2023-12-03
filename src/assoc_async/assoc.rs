@@ -219,7 +219,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
                 tx.tx
                     .notification(tx_notification, std::time::Instant::now());
                 tx.poll_wakers.drain(..).for_each(Waker::wake);
-                if tx.tx.shutdown_complete() && assoc.rx.shutdown_complete() {
+                if tx.tx.shutdown_complete() {
                     remove = true;
                 }
             }
@@ -251,7 +251,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
                         .notification(tx_notification, std::time::Instant::now());
                     tx.poll_wakers.drain(..).for_each(Waker::wake);
                 }
-                if tx.tx.shutdown_complete() && rx.rx.shutdown_complete() {
+                if tx.tx.shutdown_complete() {
                     remove = true;
                 }
             }
@@ -310,9 +310,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     self.unordered,
                 ) {
                     Ok(()) => {
-                        for waker in wrapped.poll_wakers.drain(..) {
-                            waker.wake();
-                        }
+                        wrapped.poll_wakers.drain(..).for_each(Waker::wake);
                         std::task::Poll::Ready(Ok(()))
                     }
                     Err(SendError {
@@ -430,10 +428,6 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 }
 
 impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
-    pub fn shutdown_complete(&self) -> bool {
-        self.wrapped.lock().unwrap().rx.shutdown_complete()
-    }
-
     pub fn recv_data(
         self: &Arc<AssociationRx<FakeContent>>,
         stream: u16,

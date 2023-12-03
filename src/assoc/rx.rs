@@ -122,12 +122,13 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                     .push_back(TxNotification::PeerShutdown);
             }
             Chunk::ShutDownAck => {
-                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                self.shutdown_state = Some(ShutdownState::Complete);
                 self.tx_notifications
                     .push_back(TxNotification::PeerShutdownAck);
             }
             Chunk::ShutDownComplete { .. } => {
-                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                // TODO this might need a timer?
+                self.shutdown_state = Some(ShutdownState::Complete);
                 self.tx_notifications
                     .push_back(TxNotification::PeerShutdownComplete);
             }
@@ -136,12 +137,6 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             }
         }
         None
-    }
-
-    pub fn shutdown_complete(&self) -> bool {
-        ShutdownState::is_completely_shutdown(self.shutdown_state.as_ref())
-        // TODO this should only count the bytes in the stream queues, unordered packets will not be delivered
-            && self.current_in_buffer == 0
     }
 
     fn queue_ack(&mut self) {
@@ -235,7 +230,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     }
 
     pub fn poll_data(&mut self, stream_id: u16) -> PollDataResult {
-        if self.shutdown_complete() {
+        if self.shutdown_state.is_some() {
             PollDataResult::Error(PollDataError::Closed)
         } else {
             if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {

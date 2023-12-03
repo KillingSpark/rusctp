@@ -122,6 +122,7 @@ pub struct SendError {
     pub kind: SendErrorKind,
 }
 
+#[derive(Debug)]
 pub enum PollSendResult<T> {
     None,
     Some(T),
@@ -258,6 +259,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 self.shutdown_state = Some(ShutdownState::ShutdownReceived);
             }
             TxNotification::PeerShutdownAck => {
+                eprintln!("Got shutdown ack");
                 self.send_next
                     .push_back(Chunk::ShutDownComplete { reflected: false });
                 self.shutdown_state = Some(ShutdownState::Complete);
@@ -273,7 +275,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     }
 
     pub fn initiate_shutdown(&mut self) {
-        self.shutdown_state = Some(ShutdownState::TryingTo)
+        self.shutdown_state = Some(ShutdownState::TryingTo);
     }
 
     fn process_sack_gap_blocks(
@@ -543,11 +545,11 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     ) -> PollSendResult<DataChunk> {
         let x = self._poll_data_to_send(data_limit, now);
         //eprintln!("Poll data {:?}", self.shutdown_state);
-        if x.is_none() || x.is_err() {
-            self.assert_invariants();
-            if self.out_queue.is_empty() {
-                //self.print_state();
-            }
+        if self.shutdown_state.is_some() {
+            //eprintln!("{x:?} {}", self.out_queue.len());
+            //eprintln!("Next timeout: {:?}", self.next_timeout());
+            //self.print_state();
+            //self.assert_invariants();
         }
         x
     }
