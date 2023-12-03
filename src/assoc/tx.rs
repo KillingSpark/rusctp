@@ -44,6 +44,7 @@ pub struct AssociationTx<FakeContent: FakeAddr> {
     timer_ctr: u64,
     rto_timer: Option<Timer>,
     shutdown_rto_timer: Option<Timer>,
+    heartbeat_timer: Option<Timer>,
 
     shutdown_state: Option<ShutdownState>,
 }
@@ -251,6 +252,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             srtt: Srtt::new(),
             rto_timer: None,
             shutdown_rto_timer: None,
+            heartbeat_timer: None,
             timer_ctr: 0,
             shutdown_state: None,
         }
@@ -287,22 +289,20 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     self.shutdown_state = Some(ShutdownState::TryingTo);
                 }
             }
-            TxNotification::PeerShutdown => {
-                match self.shutdown_state {
-                    None => {
-                        self.shutdown_state = Some(ShutdownState::ShutdownReceived);
-                    }
-                    Some(ShutdownState::ShutdownSent | ShutdownState::ShutdownAckSent) => {
-                        self.send_next.push_back(Chunk::ShutDownAck)
-                    }
-                    Some(
-                        ShutdownState::TryingTo
-                        | ShutdownState::ShutdownReceived
-                        | ShutdownState::Complete
-                        | ShutdownState::AbortReceived,
-                    ) => {}
+            TxNotification::PeerShutdown => match self.shutdown_state {
+                None => {
+                    self.shutdown_state = Some(ShutdownState::ShutdownReceived);
                 }
-            }
+                Some(ShutdownState::ShutdownSent | ShutdownState::ShutdownAckSent) => {
+                    self.send_next.push_back(Chunk::ShutDownAck)
+                }
+                Some(
+                    ShutdownState::TryingTo
+                    | ShutdownState::ShutdownReceived
+                    | ShutdownState::Complete
+                    | ShutdownState::AbortReceived,
+                ) => {}
+            },
             TxNotification::PeerShutdownAck => {
                 eprintln!("Got shutdown ack");
                 self.send_next
@@ -511,11 +511,28 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     // Section 5 recommends handling of this timer
     // https://www.rfc-editor.org/rfc/rfc2988
     pub fn next_timeout(&self) -> Option<Timer> {
-        match (self.rto_timer, self.shutdown_rto_timer) {
-            (Some(r), Some(s)) => Some(Timer::min(r, s)),
-            (Some(r), None) | (None, Some(r)) => Some(r),
-            (None, None) => None,
+        Self::find_next_timer(&[
+            self.shutdown_rto_timer,
+            self.rto_timer,
+            self.heartbeat_timer,
+        ])
+    }
+
+    fn find_next_timer(timer: &[Option<Timer>]) -> Option<Timer> {
+        let mut minimum: Option<Timer> = None;
+
+        for timer in timer {
+            if let Some(current) = minimum {
+                if let Some(timer) = timer {
+                    let min: Timer = Timer::min(current, *timer);
+                    minimum = Some(min);
+                }
+            } else {
+                minimum = *timer;
+            }
         }
+
+        minimum
     }
 
     pub fn handle_timeout(&mut self, timeout: Timer) {
@@ -529,6 +546,19 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 self.handle_shutdown_rto_timeout(timeout);
             }
         }
+        if let Some(current_timer) = self.heartbeat_timer {
+            if current_timer.marker == timeout.marker {
+                self.handle_heartbeat_timeout(timeout);
+            }
+        }
+    }
+
+    fn handle_heartbeat_timeout(&mut self, timeout: Timer) {
+        // TODO perform pmtu testing with this
+        // https://datatracker.ietf.org/doc/rfc8899/
+        self.send_next
+            .push_back(Chunk::HeartBeat(Bytes::from_static(&[])));
+        self.set_heartbeat_timeout(timeout.at)
     }
 
     fn handle_shutdown_rto_timeout(&mut self, timeout: Timer) {
@@ -565,6 +595,15 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             }
         });
         self.set_rto_timeout(timeout.at);
+    }
+
+    fn set_heartbeat_timeout(&mut self, now: Instant) {
+        let at = now + self.srtt.rto_duration();
+        self.heartbeat_timer = Some(Timer {
+            at,
+            marker: self.timer_ctr,
+        });
+        self.timer_ctr = self.timer_ctr.wrapping_add(1);
     }
 
     fn set_rto_timeout(&mut self, now: Instant) {

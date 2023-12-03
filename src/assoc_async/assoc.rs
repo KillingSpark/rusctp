@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     future::Future,
     sync::{Arc, Mutex},
-    task::{Waker, Poll},
+    task::{Poll, Waker},
     time::Instant,
 };
 
@@ -363,15 +363,23 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 
         impl<FakeContent: FakeAddr> Future for WaitForShutdownFuture<FakeContent> {
             type Output = ();
-            fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+            fn poll(
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Self::Output> {
                 if self.tx.shutdown_complete() {
                     Poll::Ready(())
                 } else {
-                    self.tx.wrapped.lock().unwrap().shutdown_wakers.push(cx.waker().to_owned());
+                    self.tx
+                        .wrapped
+                        .lock()
+                        .unwrap()
+                        .shutdown_wakers
+                        .push(cx.waker().to_owned());
                     Poll::Pending
                 }
             }
-        } 
+        }
 
         WaitForShutdownFuture { tx: self.clone() }
     }
