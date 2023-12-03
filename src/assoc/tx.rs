@@ -132,10 +132,10 @@ impl<T> PollSendResult<T> {
         matches!(self, Self::Some(_))
     }
     pub fn is_none(&self) -> bool {
-        matches!(self, Self::Some(_))
+        matches!(self, Self::None)
     }
     pub fn is_err(&self) -> bool {
-        matches!(self, Self::Some(_))
+        matches!(self, Self::Closed)
     }
     pub fn or_else(self, f: impl FnOnce() -> PollSendResult<T>) -> PollSendResult<T> {
         match self {
@@ -151,6 +151,7 @@ impl<T> PollSendResult<T> {
         }
     }
 
+    #[track_caller]
     pub fn unwrap(self) -> T {
         match self {
             Self::Some(t) => t,
@@ -159,6 +160,7 @@ impl<T> PollSendResult<T> {
         }
     }
 
+    #[track_caller]
     pub fn expect(self, message: &str) -> T {
         match self {
             Self::Some(t) => t,

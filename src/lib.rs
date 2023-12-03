@@ -71,9 +71,7 @@ impl FakeAddr for SocketAddr {
                     buf.get_u32(),
                 )))
             }
-            _ => {
-                Err(ParseError::IllegalFormat)
-            }
+            _ => Err(ParseError::IllegalFormat),
         }
     }
     fn serialize(&self, buf: &mut impl BufMut) {
