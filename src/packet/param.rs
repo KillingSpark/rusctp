@@ -107,7 +107,7 @@ impl<FakeContent: FakeAddr> Param<FakeContent> {
                 if size != value.len() && padded_len(size) != value.len() {
                     return (actual_len, Err(ParseError::IllegalFormat));
                 }
-                Param::Unrecognized(UnrecognizedParam { typ, data: value })
+                Param::Unrecognized(UnrecognizedParam { typ, data: clone })
             }
 
             _ => return (actual_len, Err(parse_error(typ, data.clone()))),
@@ -132,7 +132,7 @@ impl<FakeContent: FakeAddr> Param<FakeContent> {
                 size
             }
             Param::StateCookie(cookie) => PARAM_HEADER_SIZE + cookie.serialized_size(),
-            Param::Unrecognized(p) => PARAM_HEADER_SIZE + p.data.len(),
+            Param::Unrecognized(p) => PARAM_HEADER_SIZE + PARAM_HEADER_SIZE + p.data.len(),
         }
     }
 
@@ -269,9 +269,10 @@ fn roundtrip() {
         peer_port: 1234,
         local_port: 1234,
         aliases: vec![
-            TransportAddress::Fake(1234),
             TransportAddress::IpV4(1234.into()),
+            TransportAddress::IpV4(12341.into()),
             TransportAddress::IpV6(1234.into()),
+            TransportAddress::IpV6(12341.into()),
         ],
         local_verification_tag: 1234,
         peer_verification_tag: 1234,

@@ -281,9 +281,10 @@ fn roundtrip() {
         peer_port: 12334,
         local_port: 12335,
         aliases: vec![
-            TransportAddress::Fake(12345),
             TransportAddress::IpV4(12345.into()),
             TransportAddress::IpV6(12345.into()),
+            TransportAddress::IpV4(123451.into()),
+            TransportAddress::IpV6(123451.into()),
         ],
         local_verification_tag: 1234,
         peer_verification_tag: 5467,
