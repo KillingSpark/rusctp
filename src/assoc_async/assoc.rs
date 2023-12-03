@@ -433,7 +433,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         tx: &mut crate::assoc::AssociationTx<FakeContent>,
         limit: usize,
     ) -> PollSendResult<Chunk<FakeContent>> {
-        tx.poll_signal_to_send(limit)
+        tx.poll_signal_to_send(limit, Instant::now())
             .or_else(|| tx.poll_data_to_send(limit, Instant::now()).map(Chunk::Data))
     }
 

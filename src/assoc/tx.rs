@@ -30,6 +30,7 @@ pub struct AssociationTx<FakeContent: FakeAddr> {
 
     tsn_counter: Tsn,
     last_acked_tsn: Tsn,
+    peer_last_acked_tsn: Tsn,
     duplicated_acks: usize,
 
     out_buffer_limit: usize,
@@ -42,6 +43,7 @@ pub struct AssociationTx<FakeContent: FakeAddr> {
 
     timer_ctr: u64,
     rto_timer: Option<Timer>,
+    shutdown_rto_timer: Option<Timer>,
 
     shutdown_state: Option<ShutdownState>,
 }
@@ -106,6 +108,25 @@ pub struct Timer {
 impl Timer {
     pub fn at(&self) -> Instant {
         self.at
+    }
+}
+
+impl Eq for Timer {}
+impl PartialEq for Timer {
+    fn eq(&self, other: &Self) -> bool {
+        self.at.eq(&other.at) && self.marker.eq(&other.marker)
+    }
+}
+
+impl PartialOrd for Timer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(Self::cmp(self, other))
+    }
+}
+
+impl Ord for Timer {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.at.cmp(&other.at)
     }
 }
 
@@ -210,6 +231,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             peer_port,
             tsn_counter: init_tsn,
             last_acked_tsn: Tsn(0),
+            peer_last_acked_tsn: Tsn(0),
             duplicated_acks: 0,
             out_buffer_limit,
             peer_rcv_window: peer_arwnd,
@@ -228,6 +250,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             current_out_buffered: 0,
             srtt: Srtt::new(),
             rto_timer: None,
+            shutdown_rto_timer: None,
             timer_ctr: 0,
             shutdown_state: None,
         }
@@ -244,7 +267,16 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     ) {
         match notification {
             TxNotification::Send(Chunk::Data(data)) => self.out_queue.push_back(data),
-            TxNotification::Send(chunk) => self.send_next.push_back(chunk),
+            TxNotification::Send(chunk) => {
+                if let Chunk::SAck(ref sack) = chunk {
+                    self.peer_last_acked_tsn = sack.cum_tsn;
+                    if let Some(ShutdownState::ShutdownSent) = self.shutdown_state {
+                        self.send_next
+                            .push_back(Chunk::ShutDown(self.peer_last_acked_tsn))
+                    }
+                }
+                self.send_next.push_back(chunk)
+            }
             TxNotification::_PrimaryPathChanged(addr) => self.primary_path = addr,
             TxNotification::SAck((sack, recv_at)) => self.handle_sack(sack, recv_at),
             TxNotification::Abort => {
@@ -256,7 +288,11 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 }
             }
             TxNotification::PeerShutdown => {
-                self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                if self.shutdown_state.is_none() {
+                    self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                } else {
+                    //self.send_next.push_back(Chunk::ShutDownAck)
+                }
             }
             TxNotification::PeerShutdownAck => {
                 eprintln!("Got shutdown ack");
@@ -362,7 +398,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         self.srtt.tsn_acked(sack.cum_tsn, now);
         if bytes_acked > 0 {
             if self.current_in_flight > 0 {
-                self.set_timeout(now);
+                self.set_rto_timeout(now);
             } else {
                 self.rto_timer = None;
             }
@@ -422,10 +458,13 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     }
 
     // Collect next chunk if it would still fit inside the limit
-    pub fn poll_signal_to_send(&mut self, limit: usize) -> PollSendResult<Chunk<FakeContent>> {
+    pub fn poll_signal_to_send(
+        &mut self,
+        limit: usize,
+        now: Instant,
+    ) -> PollSendResult<Chunk<FakeContent>> {
         if let Some(front) = self.send_next.front() {
             if front.serialized_size() <= limit {
-                // TODO if this is a sack prepend a shutdown
                 self.send_next.pop_front().into()
             } else {
                 PollSendResult::None
@@ -435,9 +474,9 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 Some(ShutdownState::TryingTo) => {
                     if self.resend_queue.is_empty() && self.out_queue.is_empty() {
                         self.shutdown_state = Some(ShutdownState::ShutdownSent);
-                        // TODO monitor sacks we send so we know which tsn we have sen last
+                        self.set_shutdown_rto_timeout(now);
                         eprintln!("Send shutdown");
-                        PollSendResult::Some(Chunk::ShutDown(Tsn(0)))
+                        PollSendResult::Some(Chunk::ShutDown(self.peer_last_acked_tsn))
                     } else {
                         PollSendResult::None
                     }
@@ -445,6 +484,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 Some(ShutdownState::ShutdownReceived) => {
                     if self.resend_queue.is_empty() && self.out_queue.is_empty() {
                         self.shutdown_state = Some(ShutdownState::ShutdownAckSent);
+                        self.set_shutdown_rto_timeout(now);
                         PollSendResult::Some(Chunk::ShutDownAck)
                     } else {
                         PollSendResult::None
@@ -452,14 +492,8 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 }
                 Some(ShutdownState::AbortReceived) => PollSendResult::Closed,
                 Some(ShutdownState::Complete) => PollSendResult::Closed,
-                Some(ShutdownState::ShutdownSent) => {
-                    // TODO set retransmit timer for this
-                    PollSendResult::None
-                }
-                Some(ShutdownState::ShutdownAckSent) => {
-                    // TODO set retransmit timer for this
-                    PollSendResult::None
-                }
+                Some(ShutdownState::ShutdownSent) => PollSendResult::None,
+                Some(ShutdownState::ShutdownAckSent) => PollSendResult::None,
                 None => PollSendResult::None,
             }
         }
@@ -468,36 +502,74 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     // Section 5 recommends handling of this timer
     // https://www.rfc-editor.org/rfc/rfc2988
     pub fn next_timeout(&self) -> Option<Timer> {
-        self.rto_timer
+        match (self.rto_timer, self.shutdown_rto_timer) {
+            (Some(r), Some(s)) => Some(Timer::min(r, s)),
+            (Some(r), None) | (None, Some(r)) => Some(r),
+            (None, None) => None,
+        }
     }
 
     pub fn handle_timeout(&mut self, timeout: Timer) {
+        if let Some(current_timer) = self.rto_timer {
+            if current_timer.marker == timeout.marker {
+                self.handle_rto_timeout(timeout);
+            }
+        }
+        if let Some(current_timer) = self.shutdown_rto_timer {
+            if current_timer.marker == timeout.marker {
+                self.handle_shutdown_rto_timeout(timeout);
+            }
+        }
+    }
+
+    fn handle_shutdown_rto_timeout(&mut self, timeout: Timer) {
+        match self.shutdown_state {
+            Some(ShutdownState::ShutdownSent) => {
+                self.send_next
+                    .push_back(Chunk::ShutDown(self.peer_last_acked_tsn));
+                self.set_shutdown_rto_timeout(timeout.at);
+            }
+            Some(ShutdownState::ShutdownAckSent) => {
+                self.send_next.push_back(Chunk::ShutDownAck);
+                self.set_shutdown_rto_timeout(timeout.at);
+            }
+            Some(ShutdownState::ShutdownReceived) => {}
+            Some(ShutdownState::TryingTo) => {}
+            Some(ShutdownState::Complete) => {}
+            Some(ShutdownState::AbortReceived) => {}
+            None => { /* Huh? */ }
+        }
+    }
+
+    fn handle_rto_timeout(&mut self, timeout: Timer) {
         if self.resend_queue.is_empty() {
             self.rto_timer = None;
             return;
         }
-        if let Some(current_timer) = self.rto_timer {
-            if current_timer.marker == timeout.marker {
-                self.primary_congestion.rto_expired();
-                self.srtt.rto_expired();
+        self.primary_congestion.rto_expired();
+        self.srtt.rto_expired();
 
-                self.resend_queue.iter_mut().for_each(|p| {
-                    if !p.marked_for_retransmit
-                        && p.queued_at + self.srtt.rto_duration() <= timeout.at
-                    {
-                        p.marked_for_retransmit = true;
-                        p.queued_at = timeout.at;
-                    }
-                });
+        self.resend_queue.iter_mut().for_each(|p| {
+            if !p.marked_for_retransmit && p.queued_at + self.srtt.rto_duration() <= timeout.at {
+                p.marked_for_retransmit = true;
+                p.queued_at = timeout.at;
             }
-        }
-        // TODO do we trust this or do we take another "now" Instant in the hope that it will be more precise?
-        self.set_timeout(timeout.at);
+        });
+        self.set_rto_timeout(timeout.at);
     }
 
-    fn set_timeout(&mut self, now: Instant) {
+    fn set_rto_timeout(&mut self, now: Instant) {
         let at = now + self.srtt.rto_duration();
         self.rto_timer = Some(Timer {
+            at,
+            marker: self.timer_ctr,
+        });
+        self.timer_ctr = self.timer_ctr.wrapping_add(1);
+    }
+
+    fn set_shutdown_rto_timeout(&mut self, now: Instant) {
+        let at = now + self.srtt.rto_duration();
+        self.shutdown_rto_timer = Some(Timer {
             at,
             marker: self.timer_ctr,
         });
@@ -564,7 +636,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                         let rtx = front.data.clone();
                         front.marked_for_retransmit = false;
                         if self.rto_timer.is_none() {
-                            self.set_timeout(now);
+                            self.set_rto_timeout(now);
                         }
                         //eprintln!("Slow RTX: {:?}", rtx.tsn);
                         return PollSendResult::Some(rtx);
@@ -654,7 +726,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     .push_back(ResendEntry::new(packet.clone(), now));
                 self.srtt.tsn_sent(packet.tsn, now);
                 if self.rto_timer.is_none() {
-                    self.set_timeout(now);
+                    self.set_rto_timeout(now);
                 }
                 PollSendResult::Some(packet)
             }

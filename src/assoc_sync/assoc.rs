@@ -237,7 +237,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn poll_chunk_to_send(&self) -> (Packet, Chunk<FakeContent>) {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            match wrapped.poll_signal_to_send(1024).or_else(|| {
+            match wrapped.poll_signal_to_send(1024, Instant::now()).or_else(|| {
                 wrapped
                     .poll_data_to_send(1024, Instant::now())
                     .map(Chunk::Data)

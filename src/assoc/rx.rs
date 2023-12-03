@@ -127,7 +127,6 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                     .push_back(TxNotification::PeerShutdownAck);
             }
             Chunk::ShutDownComplete { .. } => {
-                // TODO this might need a timer?
                 self.shutdown_state = Some(ShutdownState::Complete);
                 self.tx_notifications
                     .push_back(TxNotification::PeerShutdownComplete);
