@@ -47,7 +47,7 @@ impl FakeAddr for u64 {
 
 impl FakeAddr for SocketAddr {
     fn parse(buf: &mut Bytes) -> Result<Self, ParseError> {
-        if buf.len() < 1 {
+        if buf.is_empty() {
             return Err(ParseError::IllegalFormat);
         }
         match buf.get_u8() {
@@ -72,7 +72,7 @@ impl FakeAddr for SocketAddr {
                 )))
             }
             _ => {
-                return Err(ParseError::IllegalFormat);
+                Err(ParseError::IllegalFormat)
             }
         }
     }
