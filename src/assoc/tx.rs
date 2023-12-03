@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::time::Duration;
 use std::{collections::VecDeque, time::Instant};
 
 use crate::packet::data::DataChunk;
@@ -188,7 +187,7 @@ impl<T> From<Option<T>> for PollSendResult<T> {
 }
 
 impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
-    pub(crate) fn new(id: AssocId, settings: AssocTxSettings<FakeContent>, now: Instant) -> Self {
+    pub(crate) fn new(id: AssocId, settings: AssocTxSettings<FakeContent>, _now: Instant) -> Self {
         let AssocTxSettings {
             primary_path,
             peer_verification_tag,
@@ -230,7 +229,11 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             srtt: Srtt::new(),
             rto_timer: None,
             shutdown_rto_timer: None,
-            heartbeat_timer: Some(Timer::new(now + Duration::from_millis(10), 0)),
+            #[cfg(not(test))]
+            heartbeat_timer: Some(Timer::new(_now + std::time::Duration::from_millis(10), 0)),
+            // No heartbeats for tests.
+            #[cfg(test)]
+            heartbeat_timer: None,
             heartbeats_unacked: 0,
             timer_ctr: 1,
             shutdown_state: None,
