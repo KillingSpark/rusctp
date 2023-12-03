@@ -288,10 +288,19 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 }
             }
             TxNotification::PeerShutdown => {
-                if self.shutdown_state.is_none() {
-                    self.shutdown_state = Some(ShutdownState::ShutdownReceived);
-                } else {
-                    //self.send_next.push_back(Chunk::ShutDownAck)
+                match self.shutdown_state {
+                    None => {
+                        self.shutdown_state = Some(ShutdownState::ShutdownReceived);
+                    }
+                    Some(ShutdownState::ShutdownSent | ShutdownState::ShutdownAckSent) => {
+                        self.send_next.push_back(Chunk::ShutDownAck)
+                    }
+                    Some(
+                        ShutdownState::TryingTo
+                        | ShutdownState::ShutdownReceived
+                        | ShutdownState::Complete
+                        | ShutdownState::AbortReceived,
+                    ) => {}
                 }
             }
             TxNotification::PeerShutdownAck => {
