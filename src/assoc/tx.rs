@@ -106,7 +106,6 @@ pub struct AssocTxSettings<FakeContent: FakeAddr> {
     pub out_streams: u16,
     pub out_buffer_limit: usize,
     pub peer_arwnd: u32,
-    pub pmtu: usize,
 }
 
 #[derive(Debug)]
@@ -200,12 +199,11 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             out_streams,
             out_buffer_limit,
             peer_arwnd,
-            pmtu,
         } = settings;
         Self {
             id,
             primary_path,
-            primary_congestion: congestion::PerDestinationInfo::new(pmtu),
+            primary_congestion: congestion::PerDestinationInfo::new(1500),
 
             peer_verification_tag,
             local_port,
@@ -527,6 +525,8 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     return PollSendResult::None;
                 };
 
+                let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu());
+
                 let front_buf_len = front.buf.len();
 
                 // before sending new packets we need to check the peers receive window
@@ -534,7 +534,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     //eprintln!("Rcv window");
                     return PollSendResult::None;
                 }
-
+                
                 if self.current_in_flight > self.primary_congestion.cwnd {
                     //eprintln!("Cwnd window");
                     return PollSendResult::None;
@@ -549,8 +549,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     packet.end = true;
 
                     packet
-                } else if false {
-                    // TODO I am sure there are better metrics to determin usefulness of fragmentation
+                } else if front_buf_len > self.pmtu_probe.get_pmtu() {
                     let fragment_data_len = data_limit;
                     if fragment_data_len == 0 {
                         return PollSendResult::None;

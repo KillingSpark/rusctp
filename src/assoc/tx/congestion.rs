@@ -15,6 +15,10 @@ pub struct PerDestinationInfo {
 }
 
 impl PerDestinationInfo {
+    pub fn update_pmtu(&mut self, pmtu: usize) {
+        self.pmcds = pmtu - 12;
+    }
+
     pub fn new(pmtu: usize) -> Self {
         let pmcds = pmtu - 12;
         Self {

@@ -43,7 +43,6 @@ fn run_client(
             outgoing_streams: 10,
             in_buffer_limit: 1000 * PMTU,
             out_buffer_limit: 1000 * PMTU,
-            pmtu: PMTU,
         }));
 
         {
@@ -130,7 +129,6 @@ fn run_server(
             outgoing_streams: 10,
             in_buffer_limit: 1000 * PMTU,
             out_buffer_limit: 1000 * PMTU,
-            pmtu: PMTU,
         }));
 
         {

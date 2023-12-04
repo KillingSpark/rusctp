@@ -8,14 +8,19 @@ pub struct PmtuProbe {
     probe_in_flight: bool,
 }
 
+const PROBE_STEP_SIZE: usize = 1024 * 2;
 impl PmtuProbe {
     pub fn new() -> Self {
         Self {
-            last_tested_size: 0,
-            highest_successful: 0,
+            last_tested_size: 1200,
+            highest_successful: 1200,
             last_success: true,
             probe_in_flight: false,
         }
+    }
+
+    pub fn get_pmtu(&self) -> usize {
+        self.highest_successful
     }
 
     pub fn probe_in_flight(&self) -> bool {
@@ -23,7 +28,7 @@ impl PmtuProbe {
     }
 
     pub fn next_probe_size(&mut self) -> usize {
-        let probe_size = self.last_tested_size + 1024;
+        let probe_size = self.last_tested_size + PROBE_STEP_SIZE;
         self.last_tested_size = probe_size;
         self.probe_in_flight = true;
         probe_size
@@ -36,7 +41,7 @@ impl PmtuProbe {
     }
 
     pub fn probe_timed_out(&mut self) {
-        self.last_tested_size -= 1024 + 128;
+        self.last_tested_size -= PROBE_STEP_SIZE + 128;
         self.last_success = false;
         self.probe_in_flight = false;
     }

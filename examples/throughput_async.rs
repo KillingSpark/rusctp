@@ -147,16 +147,15 @@ impl Future for Join<'_> {
     }
 }
 
-const PMTU: usize = 64_000;
+const PACKET_SIZE: usize = 64_000;
 
 fn make_settings() -> Settings {
     Settings {
         cookie_secret: b"oh boy a secret string".to_vec(),
         incoming_streams: 10,
         outgoing_streams: 10,
-        in_buffer_limit: 1000 * PMTU,
-        out_buffer_limit: 1000 * PMTU,
-        pmtu: PMTU,
+        in_buffer_limit: 1000 * PACKET_SIZE,
+        out_buffer_limit: 1000 * PACKET_SIZE,
     }
 }
 
@@ -274,7 +273,7 @@ impl Context {
                 tokio::select! {
                     (addr, packet, chunk) = sctp.next_send_immediate() => {
                         if let TransportAddress::Fake(addr) = addr {
-                            send_chunk(&socket, addr, packet, chunk).await.unwrap();
+                            send_chunk(&socket, addr, packet, chunk).await;
                         }
                     }
                 }
@@ -285,7 +284,7 @@ impl Context {
         let sctp = self.sctp.clone();
         let socket = self.socket.clone();
         tokio::spawn(async move {
-            let mut buf = [0u8; PMTU];
+            let mut buf = [0u8; 1024 * 100];
             let mut want_to_shutdown = false;
             loop {
                 if want_to_shutdown && !sctp.has_assocs_left() {
@@ -316,21 +315,21 @@ impl Context {
     }
 
     fn network_send_loop(&self, tx: Arc<AssociationTx<SocketAddr>>) {
-        let mut chunk_buf = BytesMut::with_capacity(PMTU - 100);
-        let mut packet_buf = BytesMut::with_capacity(PMTU);
+        let mut chunk_buf = BytesMut::with_capacity(1024 * 100 - 100);
+        let mut packet_buf = BytesMut::with_capacity(1024 * 100);
         let socket = self.socket.clone();
         tokio::spawn(async move {
             while !tx.shutdown_complete() {
                 chunk_buf.clear();
                 packet_buf.clear();
-                let mut chunk_buf_limit = chunk_buf.limit(PMTU - 100);
+                let mut chunk_buf_limit = chunk_buf.limit(1024 * 100 - 100);
                 if let Some(timer) = tx.next_timeout() {
                     let timeout = timer.at() - Instant::now();
                     tokio::select! {
                         packet = collect_all_chunks(&tx, &mut chunk_buf_limit) => {
                             if let Ok(packet) = packet {
                                 if let TransportAddress::Fake(addr) = tx.primary_path() {
-                                    send_to(&socket, addr, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await.unwrap();
+                                    send_to(&socket, addr, packet, chunk_buf_limit.get_ref().as_ref(), &mut packet_buf).await;
                                 }
                             }
                         }
@@ -348,8 +347,7 @@ impl Context {
                                 chunk_buf_limit.get_ref().as_ref(),
                                 &mut packet_buf,
                             )
-                            .await
-                            .unwrap();
+                            .await;
                         }
                     }
                 }
@@ -361,7 +359,7 @@ impl Context {
 
     fn send_data_loop(&self, tx: Arc<AssociationTx<SocketAddr>>) {
         tokio::spawn(async move {
-            let data = Bytes::copy_from_slice(&[0u8; PMTU - 200]);
+            let data = Bytes::from_static(&[0u8; PACKET_SIZE]);
             let mut bytes_ctr = 0;
             let mut start = Instant::now();
             while !tx.shutdown_complete() {
@@ -412,10 +410,13 @@ async fn collect_all_chunks(
     tx: &Arc<AssociationTx<SocketAddr>>,
     chunks: &mut impl BufMut,
 ) -> Result<Packet, ()> {
-    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut()).await?;
+    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut() - 100).await?;
     chunk.serialize(chunks);
     while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()).some() {
         chunk.serialize(chunks);
+        if chunks.remaining_mut() < 20 {
+            break;
+        }
     }
     Ok(packet)
 }
@@ -426,12 +427,11 @@ async fn send_to(
     packet: Packet,
     chunkbuf: &[u8],
     buf: &mut BytesMut,
-) -> Result<(), tokio::io::Error> {
+) {
     packet.serialize(buf, chunkbuf);
     buf.put_slice(&chunkbuf);
 
-    socket.send_to(&buf, addr).await?;
-    Ok(())
+    socket.send_to(&buf, addr).await.ok();
 }
 
 async fn send_chunk(
@@ -439,7 +439,7 @@ async fn send_chunk(
     addr: SocketAddr,
     packet: Packet,
     chunk: Chunk<SocketAddr>,
-) -> Result<(), tokio::io::Error> {
+) {
     let mut chunkbuf = BytesMut::new();
     chunk.serialize(&mut chunkbuf);
     let chunkbuf = chunkbuf.freeze();
@@ -447,8 +447,7 @@ async fn send_chunk(
     packet.serialize(&mut buf, chunkbuf.clone());
     buf.put_slice(&chunkbuf);
 
-    socket.send_to(&buf, addr).await?;
-    Ok(())
+    socket.send_to(&buf, addr).await.ok();
 }
 
 fn format_throughput(place: &str, bytes_per_sec: usize) {

@@ -21,7 +21,6 @@ fn buffer_limits() {
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 10000000,
-            pmtu: 10000,
         },
         Instant::now(),
     );
@@ -134,7 +133,6 @@ fn arwnd_limits() {
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 20,
-            pmtu: 10000,
         },
         Instant::now(),
     );
@@ -194,7 +192,6 @@ fn rto_timeout() {
             out_streams: 1,
             out_buffer_limit: 100,
             peer_arwnd: 20,
-            pmtu: 10000,
         },
         Instant::now(),
     );

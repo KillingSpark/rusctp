@@ -77,6 +77,7 @@ impl<T: FakeAddr> AssociationTx<T> {
     pub(super) fn process_heartbeat_ack(&mut self, data: Bytes, now: Instant) {
         self.heartbeats_unacked = 0;
         self.pmtu_probe.probe_success(data.len());
+        self.primary_congestion.update_pmtu(self.pmtu_probe.get_pmtu());
         self.set_heartbeat_timeout(now);
     }
 

@@ -27,7 +27,6 @@ pub struct AssociationRx<FakeContent: FakeAddr> {
 }
 
 struct PerStreamInfo {
-    seqnum_ctr: Sequence,
     queue: BTreeMap<Sequence, DataChunk>,
 }
 
@@ -69,7 +68,6 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
 
             per_stream: (0..in_streams)
                 .map(|_| PerStreamInfo {
-                    seqnum_ctr: Sequence(u16::MAX),
                     queue: BTreeMap::new(),
                 })
                 .collect(),
@@ -241,29 +239,26 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             PollDataResult::Error(PollDataError::Closed)
         } else {
             if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
-                if let Some((seq, _)) = stream_info.queue.first_key_value() {
-                    if *seq == stream_info.seqnum_ctr.increase() {
-                        stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
-                        let (_, data) = stream_info.queue.pop_first().unwrap();
-                        self.current_in_buffer -= data.buf.len();
+                if let Some((_seq, data)) = stream_info.queue.pop_first() {
+                    self.current_in_buffer -= data.buf.len();
 
-                        if self.shutdown_state.is_none() {
-                            let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+                    if self.shutdown_state.is_none() {
+                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
+                        //eprintln!("New a_rwnd: {a_rwnd} last_sent: {}", self.last_sent_arwnd);
 
-                            if a_rwnd >= self.last_sent_arwnd * 2 {
-                                self.last_sent_arwnd = a_rwnd;
-                                self.tx_notifications
-                                    .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
-                                        cum_tsn: self.tsn_counter,
-                                        a_rwnd,
-                                        blocks: vec![],
-                                        duplicated_tsn: vec![],
-                                    })));
-                            }
+                        if a_rwnd >= self.last_sent_arwnd * 2 {
+                            self.last_sent_arwnd = a_rwnd;
+                            self.tx_notifications
+                                .push_back(TxNotification::Send(Chunk::SAck(SelectiveAck {
+                                    cum_tsn: self.tsn_counter,
+                                    a_rwnd,
+                                    blocks: vec![],
+                                    duplicated_tsn: vec![],
+                                })));
                         }
-
-                        return PollDataResult::Data(data.buf);
                     }
+
+                    return PollDataResult::Data(data.buf);
                 }
             }
             PollDataResult::NoneAvailable

@@ -39,7 +39,6 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             outgoing_streams: 10,
             in_buffer_limit: 100 * 1024,
             out_buffer_limit: 100 * 1024,
-            pmtu: 1500,
         }));
 
         let socket = Arc::new(UdpSocket::bind(client_addr).await.unwrap());
@@ -119,7 +118,6 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             outgoing_streams: 10,
             in_buffer_limit: 100 * 1024,
             out_buffer_limit: 100 * 1024,
-            pmtu: 1500,
         }));
 
         let socket = Arc::new(UdpSocket::bind(server_addr).await.unwrap());
