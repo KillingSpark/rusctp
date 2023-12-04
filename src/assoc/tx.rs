@@ -470,9 +470,10 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn poll_data_to_send(
         &mut self,
         data_limit: usize,
+        already_packed: usize,
         now: Instant,
     ) -> PollSendResult<DataChunk> {
-        let x = self._poll_data_to_send(data_limit, now);
+        let x = self._poll_data_to_send(data_limit, already_packed, now);
         //eprintln!("Poll data {:?}", self.shutdown_state);
         if self.shutdown_state.is_some() {
             //eprintln!("{x:?} {}", self.out_queue.len());
@@ -482,7 +483,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         }
         x
     }
-    fn _poll_data_to_send(&mut self, data_limit: usize, now: Instant) -> PollSendResult<DataChunk> {
+    fn _poll_data_to_send(&mut self, data_limit: usize, already_packed: usize, now: Instant) -> PollSendResult<DataChunk> {
         // The data chunk header always takes 16 bytes
         let data_limit = data_limit - 16;
 
@@ -525,7 +526,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     return PollSendResult::None;
                 };
 
-                let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu());
+                let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu() - already_packed);
 
                 let front_buf_len = front.buf.len();
 

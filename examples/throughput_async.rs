@@ -410,9 +410,14 @@ async fn collect_all_chunks(
     tx: &Arc<AssociationTx<SocketAddr>>,
     chunks: &mut impl BufMut,
 ) -> Result<Packet, ()> {
-    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut() - 100).await?;
+    let mut byte_ctr = 12;
+    let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut(), 0).await?;
     chunk.serialize(chunks);
-    while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut()).some() {
+    byte_ctr += chunk.serialized_size();
+    while let Some((_, chunk)) = tx
+        .try_poll_chunk_to_send(chunks.remaining_mut(), byte_ctr)
+        .some()
+    {
         chunk.serialize(chunks);
         if chunks.remaining_mut() < 20 {
             break;

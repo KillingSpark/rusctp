@@ -393,10 +393,12 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn poll_chunk_to_send(
         self: &Arc<AssociationTx<FakeContent>>,
         limit: usize,
+        already_packed: usize,
     ) -> impl Future<Output = Result<(Packet, Chunk<FakeContent>), ()>> {
         struct PollFuture<FakeContent: FakeAddr> {
             tx: Arc<AssociationTx<FakeContent>>,
             limit: usize,
+            already_packed: usize,
         }
 
         impl<FakeContent: FakeAddr> Future for PollFuture<FakeContent> {
@@ -407,8 +409,12 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.tx.wrapped.lock().unwrap();
-                let poll_result = AssociationTx::try_poll_any_chunk(&mut wrapped.tx, self.limit)
-                    .map(|chunk| (wrapped.tx.packet_header(), chunk));
+                let poll_result = AssociationTx::try_poll_any_chunk(
+                    &mut wrapped.tx,
+                    self.limit,
+                    self.already_packed,
+                )
+                .map(|chunk| (wrapped.tx.packet_header(), chunk));
                 match poll_result {
                     PollSendResult::Some(chunk) => {
                         if let Chunk::Data(_) = &chunk.1 {
@@ -436,23 +442,28 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         PollFuture {
             tx: self.clone(),
             limit,
+            already_packed,
         }
     }
 
     fn try_poll_any_chunk(
         tx: &mut crate::assoc::AssociationTx<FakeContent>,
         limit: usize,
+        already_packed: usize,
     ) -> PollSendResult<Chunk<FakeContent>> {
-        tx.poll_signal_to_send(limit, Instant::now())
-            .or_else(|| tx.poll_data_to_send(limit, Instant::now()).map(Chunk::Data))
+        tx.poll_signal_to_send(limit, Instant::now()).or_else(|| {
+            tx.poll_data_to_send(limit, already_packed, Instant::now())
+                .map(Chunk::Data)
+        })
     }
 
     pub fn try_poll_chunk_to_send(
         self: &Arc<AssociationTx<FakeContent>>,
         limit: usize,
+        already_packed: usize,
     ) -> PollSendResult<(Packet, Chunk<FakeContent>)> {
         let mut wrapped = self.wrapped.lock().unwrap();
-        Self::try_poll_any_chunk(&mut wrapped.tx, limit)
+        Self::try_poll_any_chunk(&mut wrapped.tx, limit, already_packed)
             .map(|chunk| (wrapped.tx.packet_header(), chunk))
     }
 

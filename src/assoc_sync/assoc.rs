@@ -241,7 +241,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 .poll_signal_to_send(1024, Instant::now())
                 .or_else(|| {
                     wrapped
-                        .poll_data_to_send(1024, Instant::now())
+                        .poll_data_to_send(1024, 0, Instant::now())
                         .map(Chunk::Data)
                 }) {
                 PollSendResult::Some(chunk) => {

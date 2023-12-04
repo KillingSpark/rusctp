@@ -220,7 +220,7 @@ impl<FakeContent: FakeAddr> Context<FakeContent> {
         while let PollSendResult::Some(signal) = tx.poll_signal_to_send(1024, Instant::now()) {
             send_to(socket, addr, packet, signal);
         }
-        while let PollSendResult::Some(data) = tx.poll_data_to_send(1024, Instant::now()) {
+        while let PollSendResult::Some(data) = tx.poll_data_to_send(1024, 0, Instant::now()) {
             send_to(socket, addr, packet, Chunk::<FakeContent>::Data(data));
         }
     }

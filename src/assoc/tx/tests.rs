@@ -53,11 +53,11 @@ fn buffer_limits() {
     ));
 
     let packet = tx
-        .poll_data_to_send(100, Instant::now())
+        .poll_data_to_send(100, 0, Instant::now())
         .expect("Should return the first packet");
-    tx.poll_data_to_send(100, Instant::now())
+    tx.poll_data_to_send(100, 0, Instant::now())
         .expect("Should return the second packet");
-    tx.poll_data_to_send(100, Instant::now())
+    tx.poll_data_to_send(100, 0, Instant::now())
         .expect("Should return the third packet");
 
     assert_eq!(tx.current_in_flight, 30);
@@ -157,9 +157,9 @@ fn arwnd_limits() {
     assert!(send_ten_bytes(&mut tx).is_ok());
     assert!(send_ten_bytes(&mut tx).is_ok());
 
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_none());
 
     tx.notification(
         TxNotification::SAck(
@@ -174,9 +174,9 @@ fn arwnd_limits() {
         std::time::Instant::now(),
     );
 
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_some());
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_some());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_none());
 }
 
 #[test]
@@ -208,29 +208,29 @@ fn rto_timeout() {
     assert!(send_ten_bytes(&mut tx).is_ok());
 
     // take first, this is the "original" transmission
-    let first = tx.poll_data_to_send(100, Instant::now()).unwrap();
+    let first = tx.poll_data_to_send(100, 0, Instant::now()).unwrap();
     // shouldn't retransmit before timeout has run out
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_none());
 
     // time it out
     let timeout = tx.next_timeout().unwrap();
     tx.handle_timeout(timeout);
 
     // now we should get a retransmission
-    let second = tx.poll_data_to_send(100, Instant::now()).unwrap();
+    let second = tx.poll_data_to_send(100, 0, Instant::now()).unwrap();
     // which is equal to the original transmission
     assert_eq!(first, second);
     // shouldn't retransmit before timeout has run out again
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_none());
 
     // give it an old timeout, this should be ignored
     tx.handle_timeout(timeout);
-    assert!(tx.poll_data_to_send(100, Instant::now()).is_none());
+    assert!(tx.poll_data_to_send(100, 0, Instant::now()).is_none());
 
     // timeout for real this time
     tx.handle_timeout(tx.next_timeout().unwrap());
     // now we should get a retransmission
-    let third = tx.poll_data_to_send(100, Instant::now()).unwrap();
+    let third = tx.poll_data_to_send(100, 0, Instant::now()).unwrap();
     // which is equal to the other transmissions
     assert_eq!(second, third);
 }
