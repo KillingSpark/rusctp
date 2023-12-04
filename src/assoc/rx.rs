@@ -239,6 +239,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             PollDataResult::Error(PollDataError::Closed)
         } else {
             if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
+                // TODO check if the packet if fragmented and if so, check if we have all parts
                 if let Some((_seq, data)) = stream_info.queue.pop_first() {
                     self.current_in_buffer -= data.buf.len();
 
