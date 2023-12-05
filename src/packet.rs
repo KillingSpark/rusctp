@@ -42,7 +42,7 @@ impl Packet {
         let from = u16::from_be_bytes(data[0..2].try_into().ok()?);
         let to = u16::from_be_bytes(data[2..4].try_into().ok()?);
         let verification_tag = u32::from_be_bytes(data[4..8].try_into().ok()?);
-        let checksum = u32::from_be_bytes(data[8..12].try_into().ok()?);
+        let checksum = u32::from_le_bytes(data[8..12].try_into().ok()?);
 
         #[cfg(not(feature = "fuzz"))]
         {
@@ -83,7 +83,7 @@ impl Packet {
             chunks.advance(chunk.len());
         }
 
-        buf.put_u32(digest.finalize());
+        buf.put_u32_le(digest.finalize());
     }
 
     pub fn from(&self) -> u16 {
