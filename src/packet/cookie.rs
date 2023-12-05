@@ -234,7 +234,7 @@ impl<FakeContent: FakeAddr> Cookie<FakeContent> {
             }
         };
 
-        while data.remaining() > 5 {
+        while data.remaining() >= 5 {
             match data.get_u8() {
                 1 => {
                     if data.remaining() < 4 {
