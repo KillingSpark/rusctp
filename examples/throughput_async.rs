@@ -147,7 +147,7 @@ impl Future for Join<'_> {
     }
 }
 
-const PACKET_SIZE: usize = 50_000;
+const PACKET_SIZE: usize = 100_000;
 
 fn make_settings() -> Settings {
     Settings {
@@ -420,7 +420,9 @@ async fn collect_all_chunks(
     {
         chunk.serialize(chunks);
         byte_ctr += chunk.serialized_size();
-        if byte_ctr > 60000 && !matches!(chunk, Chunk::HeartBeat(_)) {
+
+        // Pmtu on linux loopback is u16::MAX
+        if byte_ctr > u16::MAX as usize && !matches!(chunk, Chunk::HeartBeat(_)) {
             eprintln!("HUH {byte_ctr}! {chunk:?}");
         }
         if chunks.remaining_mut() < 20 {
