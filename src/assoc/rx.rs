@@ -99,7 +99,6 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
 
     fn assert_invariants(&self) {
         // self.print_state();
-        return;
         let actual_reordered_buffered = self
             .tsn_reorder_buffer
             .iter()
