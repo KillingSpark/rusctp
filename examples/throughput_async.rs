@@ -147,7 +147,7 @@ impl Future for Join<'_> {
     }
 }
 
-const PACKET_SIZE: usize = 100_000;
+const PACKET_SIZE: usize = 60_000;
 
 fn make_settings() -> Settings {
     Settings {
@@ -392,7 +392,7 @@ impl Context {
                     eprintln!("Receive errored");
                     break;
                 };
-                bytes_ctr += data.len() as u64;
+                bytes_ctr += data.iter().map(|x| x.buf.len()).sum::<usize>() as u64;
                 if start.elapsed() >= Duration::from_secs(1) {
                     let bytes_per_sec = (1_000_000 * bytes_ctr)
                         / (std::time::Instant::now() - start).as_micros() as u64;

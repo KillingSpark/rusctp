@@ -10,7 +10,7 @@ pub struct DataChunk {
     pub stream_id: u16,
     pub stream_seq_num: Sequence,
     pub ppid: u32,
-    pub(crate) buf: Bytes,
+    pub buf: Bytes,
 
     pub immediate: bool,
     pub unordered: bool,
