@@ -255,6 +255,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
                     tx.tx
                         .notification(tx_notification, std::time::Instant::now());
                     tx.poll_wakers.drain(..).for_each(Waker::wake);
+                    tx.send_wakers.drain(..).for_each(Waker::wake);
                 }
                 if tx.tx.shutdown_complete() {
                     remove = true;
@@ -451,7 +452,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         limit: usize,
         already_packed: usize,
     ) -> PollSendResult<Chunk<FakeContent>> {
-        tx.poll_signal_to_send(limit, Instant::now()).or_else(|| {
+        tx.poll_signal_to_send(limit, already_packed, Instant::now()).or_else(|| {
             tx.poll_data_to_send(limit, already_packed, Instant::now())
                 .map(Chunk::Data)
         })

@@ -238,7 +238,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
             match wrapped
-                .poll_signal_to_send(1024, Instant::now())
+                .poll_signal_to_send(1024, 0, Instant::now())
                 .or_else(|| {
                     wrapped
                         .poll_data_to_send(1024, 0, Instant::now())

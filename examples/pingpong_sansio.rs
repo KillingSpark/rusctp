@@ -217,7 +217,7 @@ impl<FakeContent: FakeAddr> Context<FakeContent> {
         socket: &mut UdpSocket,
     ) {
         let packet = tx.packet_header();
-        while let PollSendResult::Some(signal) = tx.poll_signal_to_send(1024, Instant::now()) {
+        while let PollSendResult::Some(signal) = tx.poll_signal_to_send(1024, 0, Instant::now()) {
             send_to(socket, addr, packet, signal);
         }
         while let PollSendResult::Some(data) = tx.poll_data_to_send(1024, 0, Instant::now()) {

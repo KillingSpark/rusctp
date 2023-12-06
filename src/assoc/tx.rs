@@ -364,15 +364,20 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     pub fn poll_signal_to_send(
         &mut self,
         limit: usize,
+        already_packed: usize,
         now: Instant,
     ) -> PollSendResult<Chunk<FakeContent>> {
+        let limit = usize::min(limit, self.pmtu_probe.get_pmtu() - already_packed);
+
         if let Some(front) = self.send_next.front() {
             if front.serialized_size() <= limit {
                 self.send_next.pop_front().into()
             } else {
                 if let Chunk::HeartBeat(_) = front {
-                    self.send_next.pop_front();
-                    return self.poll_signal_to_send(limit, now);
+                    if already_packed == 0 {
+                        // Only add a heartbeat probe if it woulnd't drop the other chunks in the packet on fail
+                        return self.send_next.pop_front().into();
+                    }
                 }
                 PollSendResult::None
             }
@@ -485,6 +490,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
     }
     fn _poll_data_to_send(&mut self, data_limit: usize, already_packed: usize, now: Instant) -> PollSendResult<DataChunk> {
         // The data chunk header always takes 16 bytes
+        let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu() - already_packed);
         let data_limit = data_limit - 16;
 
         match self.primary_congestion.state() {
@@ -525,8 +531,6 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 let Some(front) = self.out_queue.front() else {
                     return PollSendResult::None;
                 };
-
-                let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu() - already_packed);
 
                 let front_buf_len = front.buf.len();
 

@@ -147,7 +147,7 @@ impl Future for Join<'_> {
     }
 }
 
-const PACKET_SIZE: usize = 64_000;
+const PACKET_SIZE: usize = 30_000;
 
 fn make_settings() -> Settings {
     Settings {
@@ -419,6 +419,7 @@ async fn collect_all_chunks(
         .some()
     {
         chunk.serialize(chunks);
+        byte_ctr += chunk.serialized_size();
         if chunks.remaining_mut() < 20 {
             break;
         }
