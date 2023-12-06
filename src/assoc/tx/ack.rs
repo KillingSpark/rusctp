@@ -45,6 +45,8 @@ impl<T: FakeAddr> AssociationTx<T> {
                 next_packet = Some(packet);
             }
         }
+        // eprintln!("Got sack up to: {:?} New bytes acked: {fully_acked} {sack:?}", sack.cum_tsn);
+        // eprintln!("Still in queues: rtx {} out {}", self.resend_queue.len(), self.out_queue.len());
         self.primary_congestion.bytes_acked(
             partial_bytes_acked,
             fully_acked,

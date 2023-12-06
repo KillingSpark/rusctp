@@ -367,7 +367,10 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         already_packed: usize,
         now: Instant,
     ) -> PollSendResult<Chunk<FakeContent>> {
-        let limit = usize::min(limit, self.pmtu_probe.get_pmtu() - already_packed);
+        let limit = usize::min(
+            limit,
+            self.pmtu_probe.get_pmtu() - usize::min(self.pmtu_probe.get_pmtu(), already_packed),
+        );
 
         if let Some(front) = self.send_next.front() {
             if front.serialized_size() <= limit {
@@ -488,8 +491,16 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         }
         x
     }
-    fn _poll_data_to_send(&mut self, data_limit: usize, already_packed: usize, now: Instant) -> PollSendResult<DataChunk> {
+    fn _poll_data_to_send(
+        &mut self,
+        data_limit: usize,
+        already_packed: usize,
+        now: Instant,
+    ) -> PollSendResult<DataChunk> {
         // The data chunk header always takes 16 bytes
+        if self.pmtu_probe.get_pmtu() <= already_packed {
+            return PollSendResult::None;
+        }
         let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu() - already_packed);
         let data_limit = data_limit - 16;
 
@@ -502,7 +513,12 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                         if self.rto_timer.is_none() {
                             self.set_rto_timeout(now);
                         }
-                        //eprintln!("Slow RTX: {:?}", rtx.tsn);
+                        eprintln!(
+                            "Slow RTX: {:?} {data_limit} {} {already_packed} {}",
+                            rtx.tsn,
+                            rtx.buf.len(),
+                            self.pmtu_probe.get_pmtu()
+                        );
                         return PollSendResult::Some(rtx);
                     }
                 } else {
@@ -539,7 +555,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     //eprintln!("Rcv window");
                     return PollSendResult::None;
                 }
-                
+
                 if self.current_in_flight > self.primary_congestion.cwnd {
                     //eprintln!("Cwnd window");
                     return PollSendResult::None;
@@ -582,6 +598,8 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                 } else {
                     return PollSendResult::None;
                 };
+
+                // eprintln!("Put new packet on the wire: {:?}", packet.tsn);
                 self.tsn_counter = self.tsn_counter.increase();
                 self.peer_rcv_window -= packet.buf.len() as u32;
                 self.current_in_flight += packet.buf.len();

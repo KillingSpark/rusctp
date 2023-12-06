@@ -147,7 +147,7 @@ impl Future for Join<'_> {
     }
 }
 
-const PACKET_SIZE: usize = 30_000;
+const PACKET_SIZE: usize = 50_000;
 
 fn make_settings() -> Settings {
     Settings {
@@ -155,7 +155,7 @@ fn make_settings() -> Settings {
         incoming_streams: 10,
         outgoing_streams: 10,
         in_buffer_limit: 1000 * PACKET_SIZE,
-        out_buffer_limit: 1000 * PACKET_SIZE,
+        out_buffer_limit: 10 * PACKET_SIZE,
     }
 }
 
@@ -420,6 +420,9 @@ async fn collect_all_chunks(
     {
         chunk.serialize(chunks);
         byte_ctr += chunk.serialized_size();
+        if byte_ctr > 60000 && !matches!(chunk, Chunk::HeartBeat(_)) {
+            eprintln!("HUH {byte_ctr}! {chunk:?}");
+        }
         if chunks.remaining_mut() < 20 {
             break;
         }
@@ -437,7 +440,9 @@ async fn send_to(
     packet.serialize(buf, chunkbuf);
     buf.put_slice(&chunkbuf);
 
-    socket.send_to(&buf, addr).await.ok();
+    if let Err(err) = socket.send_to(&buf, addr).await {
+        eprintln!("Error sending packet: {err:?}");
+    }
 }
 
 async fn send_chunk(
@@ -453,7 +458,10 @@ async fn send_chunk(
     packet.serialize(&mut buf, chunkbuf.clone());
     buf.put_slice(&chunkbuf);
 
-    socket.send_to(&buf, addr).await.ok();
+    if let Err(err) = socket.send_to(&buf, addr).await {
+        eprintln!("Error sending packet: {err:?}");
+        eprintln!("Single chunk too big {}!", chunk.serialized_size());
+    }
 }
 
 fn format_throughput(place: &str, bytes_per_sec: usize) {

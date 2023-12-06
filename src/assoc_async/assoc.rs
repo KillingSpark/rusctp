@@ -12,7 +12,7 @@ use crate::{
     assoc::{
         timeouts::Timer, PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind,
     },
-    packet::{Chunk, Packet},
+    packet::{Chunk, Packet, data::DataChunk},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
 
@@ -477,13 +477,13 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     pub fn recv_data(
         self: &Arc<AssociationRx<FakeContent>>,
         stream: u16,
-    ) -> impl Future<Output = Result<Bytes, PollDataError>> {
+    ) -> impl Future<Output = Result<Vec<DataChunk>, PollDataError>> {
         struct RecvFuture<FakeContent: FakeAddr> {
             rx: Arc<AssociationRx<FakeContent>>,
             stream: u16,
         }
         impl<FakeContent: FakeAddr> Future for RecvFuture<FakeContent> {
-            type Output = Result<Bytes, PollDataError>;
+            type Output = Result<Vec<DataChunk>, PollDataError>;
 
             fn poll(
                 self: std::pin::Pin<&mut Self>,

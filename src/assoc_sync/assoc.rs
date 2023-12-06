@@ -9,7 +9,7 @@ use bytes::Bytes;
 
 use crate::{
     assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind},
-    packet::{Chunk, Packet},
+    packet::{Chunk, Packet, data::DataChunk},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
 
@@ -270,7 +270,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 }
 
 impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
-    pub fn recv_data(&self, stream: u16) -> Result<Bytes, PollDataError> {
+    pub fn recv_data(&self, stream: u16) -> Result<Vec<DataChunk>, PollDataError> {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
             match wrapped.poll_data(stream) {
