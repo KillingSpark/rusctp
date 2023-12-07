@@ -112,13 +112,14 @@ pub enum HeartBeatAck {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct PaddingChunk(usize);
+pub struct PaddingChunk(pub usize);
 
 impl PaddingChunk {
     fn serialize(&self, buf: &mut impl BufMut) {
         buf.put_u8(CHUNK_PAD);
         buf.put_u8(0);
         let size = CHUNK_HEADER_SIZE + self.0;
+        buf.put_u16(size as u16);
         buf.put_bytes(0, size.next_multiple_of(4));
     }
     fn serialized_size(&self) -> usize {
