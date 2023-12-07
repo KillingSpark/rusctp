@@ -147,7 +147,7 @@ impl Future for Join<'_> {
     }
 }
 
-const PACKET_SIZE: usize = 60_000;
+const PACKET_SIZE: usize = 200_000;
 
 fn make_settings() -> Settings {
     Settings {

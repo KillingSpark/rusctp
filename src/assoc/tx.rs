@@ -502,6 +502,9 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             return PollSendResult::None;
         }
         let data_limit = usize::min(data_limit, self.pmtu_probe.get_pmtu() - already_packed);
+        if data_limit <= 16 {
+            return PollSendResult::None;
+        }
         let data_limit = data_limit - 16;
 
         match self.primary_congestion.state() {
