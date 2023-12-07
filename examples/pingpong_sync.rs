@@ -60,7 +60,9 @@ fn main() {
         std::thread::spawn(move || loop {
             let data = assoc.1.recv_data(0).unwrap();
             eprintln!("Received: {data:?}");
-            retx.send_data(data, 0, 0, false, false).unwrap();
+            for chunk in data {
+                retx.send_data(chunk.buf, 0, 0, false, false).unwrap();
+            }
         });
 
         loop {
@@ -110,7 +112,9 @@ fn main() {
         std::thread::spawn(move || loop {
             let data = assoc.1.recv_data(0).unwrap();
             eprintln!("Received: {data:?}");
-            retx.send_data(data, 0, 0, false, false).unwrap();
+            for chunk in data {
+                retx.send_data(chunk.buf, 0, 0, false, false).unwrap();
+            }
         });
 
         loop {

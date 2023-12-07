@@ -190,7 +190,9 @@ impl<FakeContent: FakeAddr> Context<FakeContent> {
                     // Echo back data we receive
                     match rx.poll_data(0) {
                         PollDataResult::Data(data) => {
-                            tx.try_send_data(data, 0, 0, false, false).unwrap();
+                            for chunk in data {
+                                tx.try_send_data(chunk.buf, 0, 0, false, false).unwrap();
+                            }
                         }
                         PollDataResult::NoneAvailable => { /* ignore */ }
                         PollDataResult::Error(err) => panic!("{:?}", err),
