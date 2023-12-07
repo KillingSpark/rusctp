@@ -285,8 +285,9 @@ impl<FakeContent: FakeAddr> Sctp<FakeContent> {
                                     packet.from(),
                                     assoc_info.peer_verification_tag,
                                 ),
-                                Chunk::HeartBeatAck(data),
+                                Chunk::HeartBeatAck(data.into()),
                             )),
+                            Chunk::Padding(_) => { /* ignore */ }
                             _ => {
                                 self.rx_notifications
                                     .push_back((assoc_id, RxNotification::Chunk(chunk)));

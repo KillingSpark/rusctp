@@ -3,7 +3,7 @@ use std::{collections::VecDeque, time::Instant};
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
-use crate::packet::{Sequence, Tsn};
+use crate::packet::{Sequence, Tsn, HeartBeatAck};
 use crate::{AssocId, Chunk, FakeAddr, Packet, TransportAddress};
 use bytes::{Buf, Bytes};
 
@@ -93,7 +93,7 @@ pub enum TxNotification<FakeContent: FakeAddr> {
     PeerShutdown,
     PeerShutdownAck,
     PeerShutdownComplete,
-    HeartBeatAck(Bytes, Instant),
+    HeartBeatAck(HeartBeatAck, Instant),
     _PrimaryPathChanged(TransportAddress<FakeContent>),
 }
 

@@ -176,7 +176,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             }
             Chunk::HeartBeat(data) => {
                 self.tx_notifications
-                    .push_back(TxNotification::Send(Chunk::HeartBeatAck(data)));
+                    .push_back(TxNotification::Send(Chunk::HeartBeatAck(data.into())));
             }
             Chunk::HeartBeatAck(ack) => {
                 self.tx_notifications

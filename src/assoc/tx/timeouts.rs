@@ -1,8 +1,10 @@
 use std::time::Instant;
 
-use bytes::Bytes;
-
-use crate::{assoc::ShutdownState, packet::Chunk, FakeAddr};
+use crate::{
+    assoc::ShutdownState,
+    packet::{Chunk, HeartBeat, HeartBeatAck},
+    FakeAddr,
+};
 
 use super::AssociationTx;
 
@@ -65,19 +67,21 @@ impl<T: FakeAddr> AssociationTx<T> {
             self.heartbeats_unacked += 1;
             // TODO we probably want to do something if heartbeats do not get answered repeatedly
         } else {
-            static EMPTY_DATA: &[u8] = &[0u8; 1024 * 70];
-            static BYTES: Bytes = Bytes::from_static(EMPTY_DATA);
-            let probe_size = usize::min(self.pmtu_probe.next_probe_size(), BYTES.len());
-            self.send_next
-                .push_back(Chunk::HeartBeat(BYTES.slice(..probe_size)));
+            let probe_size = self.pmtu_probe.next_probe_size() as u32;
+            self.send_next.push_back(Chunk::HeartBeat(HeartBeat::Ours {
+                pmtu_probe: probe_size,
+            }));
         }
         self.set_heartbeat_timeout(timeout.at);
     }
 
-    pub(super) fn process_heartbeat_ack(&mut self, data: Bytes, now: Instant) {
+    pub(super) fn process_heartbeat_ack(&mut self, data: HeartBeatAck, now: Instant) {
         self.heartbeats_unacked = 0;
-        self.pmtu_probe.probe_success(data.len());
-        self.primary_congestion.update_pmtu(self.pmtu_probe.get_pmtu());
+        if let Some(pmtu_probe) = data.ours() {
+            self.pmtu_probe.probe_success(pmtu_probe as usize);
+            self.primary_congestion
+                .update_pmtu(self.pmtu_probe.get_pmtu());
+        }
         self.set_heartbeat_timeout(now);
     }
 

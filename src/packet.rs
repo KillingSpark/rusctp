@@ -100,13 +100,133 @@ impl Packet {
 }
 
 #[derive(PartialEq, Debug)]
+pub enum HeartBeat {
+    Opaque(Bytes),
+    Ours { pmtu_probe: u32 },
+}
+
+#[derive(PartialEq, Debug)]
+pub enum HeartBeatAck {
+    Opaque(Bytes),
+    Ours { pmtu_probe: u32 },
+}
+
+#[derive(PartialEq, Debug)]
+pub struct PaddingChunk(usize);
+
+impl PaddingChunk {
+    fn serialize(&self, buf: &mut impl BufMut) {
+        buf.put_u8(CHUNK_PAD);
+        buf.put_u8(0);
+        let size = CHUNK_HEADER_SIZE + self.0;
+        buf.put_bytes(0, size.next_multiple_of(4));
+    }
+    fn serialized_size(&self) -> usize {
+        CHUNK_HEADER_SIZE + self.0
+    }
+}
+
+impl HeartBeat {
+    fn serialize(&self, buf: &mut impl BufMut) {
+        buf.put_u8(CHUNK_HEARTBEAT);
+        buf.put_u8(0);
+        match self {
+            HeartBeat::Opaque(data) => {
+                let size = data.len() + CHUNK_HEADER_SIZE;
+                buf.put_u16(size as u16);
+                buf.put_slice(data);
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
+            }
+            HeartBeat::Ours { pmtu_probe } => {
+                let size = CHUNK_HEADER_SIZE + 4 + 4;
+                buf.put_u16(size as u16);
+                buf.put_u16(1);
+                buf.put_u16(8);
+                buf.put_u32(*pmtu_probe);
+                if *pmtu_probe > 0 {
+                    PaddingChunk(*pmtu_probe as usize).serialize(buf)
+                }
+            }
+        }
+    }
+    fn serialized_size(&self) -> usize {
+        match self {
+            HeartBeat::Opaque(data) => data.len() + CHUNK_HEADER_SIZE,
+            HeartBeat::Ours { pmtu_probe } => {
+                CHUNK_HEADER_SIZE
+                    + 4
+                    + 4
+                    + if *pmtu_probe > 0 {
+                        PaddingChunk(*pmtu_probe as usize).serialized_size()
+                    } else {
+                        0
+                    }
+            }
+        }
+    }
+}
+
+impl From<HeartBeat> for HeartBeatAck {
+    fn from(value: HeartBeat) -> Self {
+        match value {
+            HeartBeat::Opaque(data) => HeartBeatAck::Opaque(data),
+            HeartBeat::Ours { pmtu_probe } => HeartBeatAck::Ours { pmtu_probe },
+        }
+    }
+}
+
+impl HeartBeatAck {
+    fn serialize(&self, buf: &mut impl BufMut) {
+        buf.put_u8(CHUNK_HEARTBEAT_ACK);
+        buf.put_u8(0);
+        match self {
+            HeartBeatAck::Opaque(data) => {
+                let size = data.len() + CHUNK_HEADER_SIZE;
+                buf.put_u16(size as u16);
+                buf.put_slice(data);
+                // maybe padding is needed
+                buf.put_bytes(0, padding_needed(size));
+            }
+            HeartBeatAck::Ours { pmtu_probe } => {
+                let size = CHUNK_HEADER_SIZE + 4 + 4;
+                buf.put_u16(size as u16);
+                buf.put_u16(1);
+                buf.put_u16(8);
+                buf.put_u32(*pmtu_probe);
+            }
+        }
+    }
+    fn serialized_size(&self) -> usize {
+        match self {
+            HeartBeatAck::Opaque(data) => data.len() + CHUNK_HEADER_SIZE,
+            HeartBeatAck::Ours { pmtu_probe: _ } => CHUNK_HEADER_SIZE + 4 + 4,
+        }
+    }
+    pub fn ours(self) -> Option<u32> {
+        match self {
+            HeartBeatAck::Ours { pmtu_probe } => Some(pmtu_probe),
+            HeartBeatAck::Opaque(mut data) => {
+                if data.get_u16() == 1 {
+                    let size = data.get_u16();
+                    if size == 8 && data.len() == 4 {
+                        return Some(data.get_u32());
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
 pub enum Chunk<FakeContent: FakeAddr> {
     Data(DataChunk),
     Init(init::InitChunk<FakeContent>),
     InitAck(init::InitAck<FakeContent>),
     SAck(sack::SelectiveAck),
-    HeartBeat(Bytes),
-    HeartBeatAck(Bytes),
+    HeartBeat(HeartBeat),
+    HeartBeatAck(HeartBeatAck),
     Abort {
         reflected: bool,
         error_causes: Bytes,
@@ -121,6 +241,7 @@ pub enum Chunk<FakeContent: FakeAddr> {
     ShutDownComplete {
         reflected: bool,
     },
+    Padding(PaddingChunk),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -267,6 +388,7 @@ pub(crate) const CHUNK_INIT: u8 = 1;
 pub(crate) const CHUNK_INIT_ACK: u8 = 2;
 pub(crate) const CHUNK_SACK: u8 = 3;
 pub(crate) const CHUNK_HEARTBEAT: u8 = 4;
+pub(crate) const CHUNK_PAD: u8 = 0x84;
 pub(crate) const CHUNK_HEARTBEAT_ACK: u8 = 5;
 pub(crate) const CHUNK_ABORT: u8 = 6;
 pub(crate) const CHUNK_SHUTDOWN: u8 = 7;
@@ -356,8 +478,8 @@ impl<FakeContent: FakeAddr> Chunk<FakeContent> {
                 };
                 Chunk::SAck(sack)
             }
-            CHUNK_HEARTBEAT => Chunk::HeartBeat(value),
-            CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck(value),
+            CHUNK_HEARTBEAT => Chunk::HeartBeat(HeartBeat::Opaque(value)),
+            CHUNK_HEARTBEAT_ACK => Chunk::HeartBeatAck(HeartBeatAck::Opaque(value)),
             CHUNK_ABORT => Chunk::Abort {
                 reflected: flags & 0x1 == 1,
                 error_causes: value,
@@ -393,6 +515,7 @@ impl<FakeContent: FakeAddr> Chunk<FakeContent> {
                     reflected: flags & 0x1 == 1,
                 }
             }
+            CHUNK_PAD => Chunk::Padding(PaddingChunk(value.len())),
             _ => return (padded_len, Err(parse_error(typ))),
         };
         (padded_len, Ok(chunk))
@@ -415,22 +538,10 @@ impl<FakeContent: FakeAddr> Chunk<FakeContent> {
             }
             Chunk::SAck(sack) => sack.serialize(buf),
             Chunk::HeartBeat(data) => {
-                buf.put_u8(CHUNK_HEARTBEAT);
-                buf.put_u8(0);
-                let size = data.len() + CHUNK_HEADER_SIZE;
-                buf.put_u16(size as u16);
-                buf.put_slice(data);
-                // maybe padding is needed
-                buf.put_bytes(0, padding_needed(size));
+                data.serialize(buf);
             }
             Chunk::HeartBeatAck(data) => {
-                buf.put_u8(CHUNK_HEARTBEAT_ACK);
-                buf.put_u8(0);
-                let size = data.len() + CHUNK_HEADER_SIZE;
-                buf.put_u16(size as u16);
-                buf.put_slice(data);
-                // maybe padding is needed
-                buf.put_bytes(0, padding_needed(size));
+                data.serialize(buf);
             }
             Chunk::Abort {
                 reflected,
@@ -463,6 +574,7 @@ impl<FakeContent: FakeAddr> Chunk<FakeContent> {
                 let size = CHUNK_HEADER_SIZE;
                 buf.put_u16(size as u16);
             }
+            Chunk::Padding(pad) => pad.serialize(buf),
             _ => {
                 #[cfg(not(feature = "fuzz"))]
                 unimplemented!();
@@ -478,8 +590,8 @@ impl<FakeContent: FakeAddr> Chunk<FakeContent> {
             Chunk::InitAck(ack) => ack.serialized_size(),
             Chunk::StateCookie(cookie) => CHUNK_HEADER_SIZE + cookie.serialized_size(),
             Chunk::SAck(sack) => sack.serialized_size(),
-            Chunk::HeartBeat(data) => CHUNK_HEADER_SIZE + data.len(),
-            Chunk::HeartBeatAck(data) => CHUNK_HEADER_SIZE + data.len(),
+            Chunk::HeartBeat(data) => data.serialized_size(),
+            Chunk::HeartBeatAck(data) => data.serialized_size(),
             Chunk::Abort {
                 reflected: _,
                 error_causes,
@@ -487,6 +599,7 @@ impl<FakeContent: FakeAddr> Chunk<FakeContent> {
             Chunk::ShutDown(_) => CHUNK_HEADER_SIZE + 4,
             Chunk::ShutDownAck => CHUNK_HEADER_SIZE,
             Chunk::ShutDownComplete { reflected: _ } => CHUNK_HEADER_SIZE,
+            Chunk::Padding(pad) => pad.serialized_size(),
             _ => {
                 #[cfg(not(feature = "fuzz"))]
                 unimplemented!();
