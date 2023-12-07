@@ -174,7 +174,7 @@ impl<FakeContent: FakeAddr> Param<FakeContent> {
 }
 
 pub fn padding_needed(size: usize) -> usize {
-    (4 - size % 4) % 4
+    (4 - (size % 4)) % 4
 }
 
 pub fn padded_len(size: usize) -> usize {

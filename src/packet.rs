@@ -118,12 +118,12 @@ impl PaddingChunk {
     fn serialize(&self, buf: &mut impl BufMut) {
         buf.put_u8(CHUNK_PAD);
         buf.put_u8(0);
-        let size = CHUNK_HEADER_SIZE + self.0;
+        let size = CHUNK_HEADER_SIZE + self.0.next_multiple_of(4);
         buf.put_u16(size as u16);
-        buf.put_bytes(0, size.next_multiple_of(4));
+        buf.put_bytes(0, self.0.next_multiple_of(4));
     }
     fn serialized_size(&self) -> usize {
-        CHUNK_HEADER_SIZE + self.0
+        CHUNK_HEADER_SIZE + self.0.next_multiple_of(4)
     }
 }
 

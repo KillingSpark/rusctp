@@ -68,6 +68,7 @@ impl<T: FakeAddr> AssociationTx<T> {
             // TODO we probably want to do something if heartbeats do not get answered repeatedly
         } else {
             let probe_size = self.pmtu_probe.next_probe_size() as u32;
+            // eprintln!("Probe {probe_size}");
             self.send_next.push_back(Chunk::HeartBeat(HeartBeat::Ours {
                 pmtu_probe: probe_size,
             }));
