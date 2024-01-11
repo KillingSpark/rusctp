@@ -169,7 +169,8 @@ fn run_client(
         .enable_time()
         .build()
         .unwrap();
-    let port = rand::thread_rng().next_u32() as u16;
+    let port = 5001; // TODO this also needs to be an option in the CLI
+    let local_port = rand::thread_rng().next_u32() as u16;
     let sctp = Arc::new(Sctp::new(make_settings()));
 
     let handle = runtime.spawn(async move {
@@ -181,7 +182,7 @@ fn run_client(
 
         let assoc = ctx
             .sctp
-            .connect(TransportAddress::Fake(server_addr), port, 200)
+            .connect(TransportAddress::Fake(server_addr), port, local_port)
             .await;
         eprintln!("Client got assoc");
         let (tx, rx) = assoc.split();
