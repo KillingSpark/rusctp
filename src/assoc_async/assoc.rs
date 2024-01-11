@@ -12,7 +12,7 @@ use crate::{
     assoc::{
         timeouts::Timer, PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind,
     },
-    packet::{Chunk, Packet, data::DataChunk},
+    packet::{data::DataChunk, Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
 
@@ -452,10 +452,11 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         limit: usize,
         already_packed: usize,
     ) -> PollSendResult<Chunk<FakeContent>> {
-        tx.poll_signal_to_send(limit, already_packed, Instant::now()).or_else(|| {
-            tx.poll_data_to_send(limit, already_packed, Instant::now())
-                .map(Chunk::Data)
-        })
+        tx.poll_signal_to_send(limit, already_packed, Instant::now())
+            .or_else(|| {
+                tx.poll_data_to_send(limit, already_packed, Instant::now())
+                    .map(Chunk::Data)
+            })
     }
 
     pub fn try_poll_chunk_to_send(

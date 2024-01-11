@@ -9,7 +9,7 @@ use bytes::Bytes;
 
 use crate::{
     assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind},
-    packet::{Chunk, Packet, data::DataChunk},
+    packet::{data::DataChunk, Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
 

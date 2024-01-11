@@ -79,7 +79,10 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             loop {
                 let data = rx.recv_data(0).await.unwrap();
                 for chunk in data {
-                    echo_tx.send_data(chunk.buf, 0, 0, false, false).await.unwrap();
+                    echo_tx
+                        .send_data(chunk.buf, 0, 0, false, false)
+                        .await
+                        .unwrap();
                 }
             }
         });
@@ -155,7 +158,10 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
             loop {
                 let data = rx.recv_data(0).await.unwrap();
                 for chunk in data {
-                    echo_tx.send_data(chunk.buf, 0, 0, false, false).await.unwrap();
+                    echo_tx
+                        .send_data(chunk.buf, 0, 0, false, false)
+                        .await
+                        .unwrap();
                 }
             }
         });
@@ -172,7 +178,7 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
                     }
                 };
             } else {
-                let (packet, chunk) = tx.poll_chunk_to_send(1500,0).await.unwrap();
+                let (packet, chunk) = tx.poll_chunk_to_send(1500, 0).await.unwrap();
                 send_to(&socket, packet, chunk).await.unwrap();
             }
         }

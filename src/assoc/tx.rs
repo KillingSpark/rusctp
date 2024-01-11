@@ -3,7 +3,7 @@ use std::{collections::VecDeque, time::Instant};
 
 use crate::packet::data::DataChunk;
 use crate::packet::sack::SelectiveAck;
-use crate::packet::{Sequence, Tsn, HeartBeatAck};
+use crate::packet::{HeartBeatAck, Sequence, Tsn};
 use crate::{AssocId, Chunk, FakeAddr, Packet, TransportAddress};
 use bytes::{Buf, Bytes};
 

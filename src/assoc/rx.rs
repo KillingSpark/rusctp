@@ -233,7 +233,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                 stream_info
                     .queue
                     .entry(data.stream_seq_num)
-                    .or_insert_with(|| Vec::new())
+                    .or_insert_with(Vec::new)
                     .push(data);
 
                 // Check if any reordered packets can now be received

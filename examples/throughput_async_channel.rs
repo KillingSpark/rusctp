@@ -219,7 +219,10 @@ async fn collect_all_chunks<FakeContent: FakeAddr>(
     let (packet, chunk) = tx.poll_chunk_to_send(chunks.remaining_mut(), 0).await?;
     chunk.serialize(chunks);
     byte_ctr += chunk.serialized_size();
-    while let Some((_, chunk)) = tx.try_poll_chunk_to_send(chunks.remaining_mut(), byte_ctr).some() {
+    while let Some((_, chunk)) = tx
+        .try_poll_chunk_to_send(chunks.remaining_mut(), byte_ctr)
+        .some()
+    {
         chunk.serialize(chunks);
     }
     Ok(packet)
