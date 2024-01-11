@@ -62,7 +62,7 @@ impl<T: FakeAddr> AssociationTx<T> {
             return;
         }
         if sack.cum_tsn == self.last_acked_tsn {
-            self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
+            self.peer_rcv_window = sack.a_rwnd.saturating_sub(self.current_in_flight as u32);
             self.duplicated_acks += 1;
             if self.duplicated_acks >= 2 {
                 self.primary_congestion.enter_fast_recovery();
@@ -90,7 +90,7 @@ impl<T: FakeAddr> AssociationTx<T> {
 
         self.process_sack_gap_blocks(&sack, bytes_acked, in_flight_before_sack);
 
-        self.peer_rcv_window = sack.a_rwnd - self.current_in_flight as u32;
+        self.peer_rcv_window = sack.a_rwnd.saturating_sub(self.current_in_flight as u32);
         self.srtt.tsn_acked(sack.cum_tsn, now);
         if bytes_acked > 0 {
             if self.current_in_flight > 0 {
