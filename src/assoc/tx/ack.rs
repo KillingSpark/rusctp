@@ -64,7 +64,7 @@ impl<T: FakeAddr> AssociationTx<T> {
         if sack.cum_tsn == self.last_acked_tsn {
             self.peer_rcv_window = sack.a_rwnd.saturating_sub(self.current_in_flight as u32);
             self.duplicated_acks += 1;
-            if self.duplicated_acks >= 2 {
+            if self.duplicated_acks >= 2 && !self.resend_queue.is_empty() {
                 self.primary_congestion.enter_fast_recovery();
             }
             self.process_sack_gap_blocks(&sack, 0, in_flight_before_sack);

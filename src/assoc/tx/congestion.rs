@@ -67,12 +67,14 @@ impl PerDestinationInfo {
     }
 
     pub fn enter_fast_recovery(&mut self) {
-        self.ssthresh = self.cwnd / 2;
-        self.cwnd = usize::max(
-            self.ssthresh,
-            usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404)),
-        );
-        self.change_state(CongestionState::FastRecovery);
+        if matches!(self.state, CongestionState::CongestionAvoidance) {
+            self.ssthresh = self.cwnd / 2;
+            self.cwnd = usize::max(
+                self.ssthresh,
+                usize::min(4 * self.pmcds, usize::max(2 * self.pmcds, 4404)),
+            );
+            self.change_state(CongestionState::FastRecovery);
+        }
     }
 
     pub fn rto_expired(&mut self) {
