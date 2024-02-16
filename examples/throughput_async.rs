@@ -389,11 +389,11 @@ impl Context {
             let mut bytes_ctr = 0u64;
             let mut start = std::time::Instant::now();
             loop {
-                let Ok(data) = rx.recv_data(0).await else {
+                let Ok(data) = rx.recv_data().await else {
                     eprintln!("Receive errored");
                     break;
                 };
-                bytes_ctr += data.iter().map(|x| x.buf.len()).sum::<usize>() as u64;
+                bytes_ctr += data.data.iter().map(|x| x.buf.len()).sum::<usize>() as u64;
                 if start.elapsed() >= Duration::from_secs(1) {
                     let bytes_per_sec = (1_000_000 * bytes_ctr)
                         / (std::time::Instant::now() - start).as_micros() as u64;

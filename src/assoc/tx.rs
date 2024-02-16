@@ -482,6 +482,9 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         now: Instant,
     ) -> PollSendResult<DataChunk> {
         let x = self._poll_data_to_send(data_limit, already_packed, now);
+        if x.is_none() {
+            //self.print_state();
+        }
         x
     }
     fn _poll_data_to_send(

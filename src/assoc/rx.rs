@@ -15,6 +15,7 @@ pub struct AssociationRx<FakeContent: FakeAddr> {
     tsn_counter: Tsn,
     last_sent_arwnd: u32,
 
+    full_packets: VecDeque<StreamReceiveEvent>,
     per_stream: Vec<PerStreamInfo>,
     tsn_reorder_buffer: BTreeMap<Tsn, DataChunk>,
 
@@ -25,7 +26,7 @@ pub struct AssociationRx<FakeContent: FakeAddr> {
 }
 
 struct PerStreamInfo {
-    queue: BTreeMap<Sequence, Vec<DataChunk>>,
+    reassemble_queue: BTreeMap<Sequence, Vec<DataChunk>>,
 }
 
 pub enum RxNotification<FakeContent: FakeAddr> {
@@ -46,7 +47,13 @@ impl<FakeContent: FakeAddr> RxNotification<FakeContent> {
 pub enum PollDataResult {
     Error(PollDataError),
     NoneAvailable,
-    Data(Vec<DataChunk>),
+    Data(StreamReceiveEvent),
+}
+
+#[derive(Debug)]
+pub struct StreamReceiveEvent {
+    pub stream: u16,
+    pub data: Vec<DataChunk>,
 }
 
 #[derive(Debug)]
@@ -64,9 +71,10 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             tsn_counter: init_tsn.decrease(),
             last_sent_arwnd: in_buffer_limit as u32,
 
+            full_packets: VecDeque::new(),
             per_stream: (0..in_streams)
                 .map(|_| PerStreamInfo {
-                    queue: BTreeMap::new(),
+                    reassemble_queue: BTreeMap::new(),
                 })
                 .collect(),
             tsn_reorder_buffer: BTreeMap::new(),
@@ -107,10 +115,16 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         let actual_inorder_buffered = self
             .per_stream
             .iter()
-            .flat_map(|x| x.queue.iter())
+            .flat_map(|x| x.reassemble_queue.iter())
             .flat_map(|x| x.1.iter())
             .map(|c| c.buf.len())
-            .sum::<usize>();
+            .sum::<usize>()
+            + self
+                .full_packets
+                .iter()
+                .flat_map(|x| &x.data)
+                .map(|x| x.buf.len())
+                .sum::<usize>();
         assert_eq!(
             self.current_in_buffer,
             actual_reordered_buffered + actual_inorder_buffered
@@ -124,6 +138,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         }
         eprintln!("We have {} bytes buffered", self.current_in_buffer);
         eprintln!("we have {} in tsn reorder", self.tsn_reorder_buffer.len());
+        eprintln!("We have {} full packets", self.full_packets.len());
         eprintln!(
             "Gap {:?} -> {:?}",
             self.tsn_counter,
@@ -131,10 +146,10 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         );
         self.per_stream.iter().for_each(|stream| {
             eprintln!(
-                "    Stream has {} packet, {}",
-                stream.queue.len(),
+                "    Stream has {} in reassemble queue , {}",
+                stream.reassemble_queue.len(),
                 stream
-                    .queue
+                    .reassemble_queue
                     .iter()
                     .flat_map(|x| x.1.iter())
                     .map(|x| x.buf.len())
@@ -226,15 +241,26 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     }
 
     fn handle_in_order_packet(&mut self, data: DataChunk) -> bool {
-        if let Some(stream_info) = self.per_stream.get_mut(data.stream_id as usize) {
+        let stream_id = data.stream_id;
+        if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
             if self.current_in_buffer + data.buf.len() <= self.in_buffer_limit {
                 self.tsn_counter = self.tsn_counter.increase();
                 self.current_in_buffer += data.buf.len();
+                let is_end = data.end;
+                let seqnum = data.stream_seq_num;
                 stream_info
-                    .queue
+                    .reassemble_queue
                     .entry(data.stream_seq_num)
                     .or_insert_with(Vec::new)
                     .push(data);
+
+                if is_end {
+                    let full = stream_info.reassemble_queue.remove(&seqnum).unwrap();
+                    self.full_packets.push_back(StreamReceiveEvent {
+                        stream: stream_id,
+                        data: full,
+                    });
+                }
 
                 // Check if any reordered packets can now be received
                 while self
@@ -287,27 +313,13 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         }
     }
 
-    pub fn poll_data(&mut self, stream_id: u16) -> PollDataResult {
+    pub fn poll_data(&mut self) -> PollDataResult {
         if self.shutdown_state.is_some() {
             PollDataResult::Error(PollDataError::Closed)
         } else {
-            if let Some(stream_info) = self.per_stream.get_mut(stream_id as usize) {
-                // TODO check if the packet if fragmented and if so, check if we have all parts
-                if let Some((_seq, data)) = stream_info.queue.pop_first() {
-                    let cum_size = data.iter().map(|x| x.buf.len()).sum::<usize>();
-                    self.current_in_buffer -= cum_size;
-
-                    if self.shutdown_state.is_none() {
-                        let a_rwnd = (self.in_buffer_limit - self.current_in_buffer) as u32;
-                        // eprintln!("New a_rwnd: {a_rwnd} last_sent: {}", self.last_sent_arwnd);
-
-                        if a_rwnd >= self.last_sent_arwnd * 2 {
-                            self.queue_ack();
-                        }
-                    }
-
-                    return PollDataResult::Data(data);
-                }
+            if let Some(data) = self.full_packets.pop_front() {
+                self.current_in_buffer -= data.data.iter().map(|x| x.buf.len()).sum::<usize>();
+                return PollDataResult::Data(data);
             }
 
             PollDataResult::NoneAvailable

@@ -11,8 +11,9 @@ use bytes::Bytes;
 use crate::{
     assoc::{
         timeouts::Timer, PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind,
+        StreamReceiveEvent,
     },
-    packet::{data::DataChunk, Chunk, Packet},
+    packet::{Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
 
@@ -63,7 +64,7 @@ pub struct AssociationRx<FakeContent: FakeAddr> {
 
 struct InnerRx<FakeContent: FakeAddr> {
     rx: crate::assoc::AssociationRx<FakeContent>,
-    recv_wakers: HashMap<u16, Vec<Waker>>,
+    recv_wakers: Vec<Waker>,
 }
 
 impl<FakeContent: FakeAddr> Sctp<FakeContent> {
@@ -204,7 +205,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
                 rx: Arc::new(AssociationRx {
                     wrapped: Mutex::new(InnerRx {
                         rx,
-                        recv_wakers: HashMap::new(),
+                        recv_wakers: Vec::new(),
                     }),
                     tx: tx.clone(),
                 }),
@@ -238,17 +239,9 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
             let mut remove = false;
             if let Some(assoc) = self.assocs.get_mut(&id) {
                 let mut rx = assoc.rx.wrapped.lock().unwrap();
-                let stream_to_wake = rx_notification.get_stream_id();
                 rx.rx
                     .notification(rx_notification, std::time::Instant::now());
-
-                if let Some(wakers) = stream_to_wake.and_then(|stream_id| {
-                    rx.recv_wakers
-                        .get_mut(&stream_id)
-                        .map(|wakers| wakers.drain(..))
-                }) {
-                    wakers.for_each(Waker::wake);
-                }
+                rx.recv_wakers.drain(..).for_each(Waker::wake);
 
                 let mut tx = assoc.tx.wrapped.lock().unwrap();
                 for tx_notification in rx.rx.tx_notifications() {
@@ -271,9 +264,7 @@ impl<FakeContent: FakeAddr> InnerSctp<FakeContent> {
     fn remove_assoc(assocs: &mut HashMap<AssocId, Association<FakeContent>>, id: AssocId) {
         if let Some(assoc) = assocs.remove(&id) {
             let mut rx = assoc.rx.wrapped.lock().unwrap();
-            rx.recv_wakers
-                .iter_mut()
-                .for_each(|(_, v)| v.drain(..).for_each(Waker::wake));
+            rx.recv_wakers.drain(..).for_each(Waker::wake);
             let mut tx = assoc.tx.wrapped.lock().unwrap();
             tx.send_wakers.drain(..).for_each(Waker::wake);
             tx.poll_wakers.drain(..).for_each(Waker::wake);
@@ -477,21 +468,19 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
     pub fn recv_data(
         self: &Arc<AssociationRx<FakeContent>>,
-        stream: u16,
-    ) -> impl Future<Output = Result<Vec<DataChunk>, PollDataError>> {
+    ) -> impl Future<Output = Result<StreamReceiveEvent, PollDataError>> {
         struct RecvFuture<FakeContent: FakeAddr> {
             rx: Arc<AssociationRx<FakeContent>>,
-            stream: u16,
         }
         impl<FakeContent: FakeAddr> Future for RecvFuture<FakeContent> {
-            type Output = Result<Vec<DataChunk>, PollDataError>;
+            type Output = Result<StreamReceiveEvent, PollDataError>;
 
             fn poll(
                 self: std::pin::Pin<&mut Self>,
                 cx: &mut std::task::Context<'_>,
             ) -> std::task::Poll<Self::Output> {
                 let mut wrapped = self.rx.wrapped.lock().unwrap();
-                match wrapped.rx.poll_data(self.stream) {
+                match wrapped.rx.poll_data() {
                     PollDataResult::Data(data) => {
                         let mut tx = self.rx.tx.wrapped.lock().unwrap();
                         for tx_notification in wrapped.rx.tx_notifications() {
@@ -503,11 +492,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                         std::task::Poll::Ready(Ok(data))
                     }
                     PollDataResult::NoneAvailable => {
-                        wrapped
-                            .recv_wakers
-                            .entry(self.stream)
-                            .or_default()
-                            .push(cx.waker().to_owned());
+                        wrapped.recv_wakers.push(cx.waker().to_owned());
                         std::task::Poll::Pending
                     }
                     PollDataResult::Error(err) => std::task::Poll::Ready(Err(err)),
@@ -515,9 +500,6 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             }
         }
 
-        RecvFuture {
-            rx: self.clone(),
-            stream,
-        }
+        RecvFuture { rx: self.clone() }
     }
 }

@@ -188,9 +188,9 @@ impl<FakeContent: FakeAddr> Context<FakeContent> {
                     rx.notification(rx_notification, std::time::Instant::now());
 
                     // Echo back data we receive
-                    match rx.poll_data(0) {
+                    match rx.poll_data() {
                         PollDataResult::Data(data) => {
-                            for chunk in data {
+                            for chunk in data.data {
                                 tx.try_send_data(chunk.buf, 0, 0, false, false).unwrap();
                             }
                         }

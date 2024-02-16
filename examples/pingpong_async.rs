@@ -77,8 +77,8 @@ fn run_client(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         let echo_tx = tx.clone();
         tokio::spawn(async move {
             loop {
-                let data = rx.recv_data(0).await.unwrap();
-                for chunk in data {
+                let data = rx.recv_data().await.unwrap();
+                for chunk in data.data {
                     echo_tx
                         .send_data(chunk.buf, 0, 0, false, false)
                         .await
@@ -156,8 +156,8 @@ fn run_server(client_addr: SocketAddr, server_addr: SocketAddr) -> tokio::runtim
         let echo_tx = tx.clone();
         tokio::spawn(async move {
             loop {
-                let data = rx.recv_data(0).await.unwrap();
-                for chunk in data {
+                let data = rx.recv_data().await.unwrap();
+                for chunk in data.data {
                     echo_tx
                         .send_data(chunk.buf, 0, 0, false, false)
                         .await

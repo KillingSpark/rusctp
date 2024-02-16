@@ -81,7 +81,7 @@ fn run_client(
         });
         tokio::spawn(async move {
             loop {
-                rx.recv_data(0).await.unwrap();
+                rx.recv_data().await.unwrap();
             }
         });
         loop {
@@ -171,8 +171,8 @@ fn run_server(
             let mut bytes_ctr = 0u64;
             let mut start = std::time::Instant::now();
             loop {
-                let data = rx.recv_data(0).await.unwrap();
-                bytes_ctr += data.len() as u64;
+                let data = rx.recv_data().await.unwrap();
+                bytes_ctr += data.data.iter().map(|x| x.buf.len()).sum::<usize>() as u64;
                 ctr += 1;
                 if ctr % 10_000 == 0 {
                     eprintln!(

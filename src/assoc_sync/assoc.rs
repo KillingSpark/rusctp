@@ -8,8 +8,10 @@ use std::{
 use bytes::Bytes;
 
 use crate::{
-    assoc::{PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind},
-    packet::{data::DataChunk, Chunk, Packet},
+    assoc::{
+        PollDataError, PollDataResult, PollSendResult, SendError, SendErrorKind, StreamReceiveEvent,
+    },
+    packet::{Chunk, Packet},
     AssocId, FakeAddr, Settings, TransportAddress,
 };
 
@@ -270,10 +272,10 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 }
 
 impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
-    pub fn recv_data(&self, stream: u16) -> Result<Vec<DataChunk>, PollDataError> {
+    pub fn recv_data(&self) -> Result<StreamReceiveEvent, PollDataError> {
         let mut wrapped = self.wrapped.lock().unwrap();
         loop {
-            match wrapped.poll_data(stream) {
+            match wrapped.poll_data() {
                 PollDataResult::NoneAvailable => wrapped = self.signal.wait(wrapped).unwrap(),
                 PollDataResult::Data(data) => return Ok(data),
                 PollDataResult::Error(err) => return Err(err),
