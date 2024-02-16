@@ -482,13 +482,6 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
         now: Instant,
     ) -> PollSendResult<DataChunk> {
         let x = self._poll_data_to_send(data_limit, already_packed, now);
-        //eprintln!("Poll data {:?}", self.shutdown_state);
-        if self.shutdown_state.is_some() {
-            //eprintln!("{x:?} {}", self.out_queue.len());
-            //eprintln!("Next timeout: {:?}", self.next_timeout());
-            //self.print_state();
-            //self.assert_invariants();
-        }
         x
     }
     fn _poll_data_to_send(
@@ -551,19 +544,15 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
                     return PollSendResult::None;
                 };
 
-                let front_buf_len = front.buf.len();
+                if self.current_in_flight > self.primary_congestion.cwnd {
+                    //eprintln!("Cwnd window {} > {}", self.current_in_flight, self.primary_congestion.cwnd);
+                    return PollSendResult::None;
+                }
 
                 // before sending new packets we need to check the peers receive window
-                if usize::min(front_buf_len, data_limit) > self.peer_rcv_window as usize {
-                    //eprintln!("Rcv window");
-                    return PollSendResult::None;
-                }
+                let data_limit = usize::min(data_limit, self.peer_rcv_window as usize);
 
-                if self.current_in_flight > self.primary_congestion.cwnd {
-                    //eprintln!("Cwnd window");
-                    return PollSendResult::None;
-                }
-
+                let front_buf_len = front.buf.len();
                 // check if we can just send the next chunk entirely or if we need to fragment
                 let packet = if front_buf_len < data_limit {
                     let Some(mut packet) = self.out_queue.pop_front() else {
