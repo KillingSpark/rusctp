@@ -152,8 +152,14 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         }
         eprintln!("We have {} bytes buffered", self.current_in_buffer);
         eprintln!("we have {} in tsn reorder", self.tsn_reorder_buffer.len());
-        eprintln!("We have {} complete ordered packets", self.ordered_receive_events.len());
-        eprintln!("We have {} complete unordered packets", self.ordered_receive_events.len());
+        eprintln!(
+            "We have {} complete ordered packets",
+            self.ordered_receive_events.len()
+        );
+        eprintln!(
+            "We have {} complete unordered packets",
+            self.ordered_receive_events.len()
+        );
         eprintln!(
             "Gap {:?} -> {:?}",
             self.tsn_counter,
