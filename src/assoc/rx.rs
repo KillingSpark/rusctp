@@ -59,6 +59,10 @@ impl PollDataResult {
             _ => panic!("PollDataResult was: {:?}", self),
         }
     }
+
+    pub fn is_none_available(&self) -> bool {
+        matches!(self, Self::NoneAvailable)
+    }
 }
 
 #[derive(Debug)]
@@ -281,12 +285,18 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                 if is_end {
                     let full = stream_info.reassemble_queue.remove(&seqnum).unwrap();
 
+                    if !full[0].begin {
+                        // We got an end packet but no begin packet?! Sender messed up
+                        // TODO how do we react to this?
+                    }
+
                     if !full.iter().all(|p| {
                         p.unordered == unordered
                             && p.ppid == ppid
                             && p.stream_id == stream_id
                             && p.stream_seq_num == seqnum
                     }) {
+                        // Some of the flags/fields on the fragments did not stay the same. Sender messed up
                         // TODO how do we react to this?
                     }
 
@@ -384,6 +394,65 @@ mod test {
     use std::time::Instant;
 
     use super::{AssociationRx, RxNotification};
+
+    #[test]
+    fn reassembly() {
+        let mut rx: AssociationRx<u64> = AssociationRx::new(AssocId(0), Tsn(1), 10, 100000000);
+
+        rx.notification(
+            RxNotification::Chunk(Chunk::Data(DataChunk {
+                tsn: Tsn(1),
+                stream_id: 1,
+                stream_seq_num: Sequence(1),
+                ppid: 1,
+                buf: Bytes::new(),
+                immediate: false,
+                unordered: false,
+                begin: true,
+                end: false,
+            })),
+            Instant::now(),
+        );
+
+        rx.notification(
+            RxNotification::Chunk(Chunk::Data(DataChunk {
+                tsn: Tsn(2),
+                stream_id: 2,
+                stream_seq_num: Sequence(1),
+                ppid: 2,
+                buf: Bytes::new(),
+                immediate: false,
+                unordered: false,
+                begin: true,
+                end: true,
+            })),
+            Instant::now(),
+        );
+
+        rx.notification(
+            RxNotification::Chunk(Chunk::Data(DataChunk {
+                tsn: Tsn(3),
+                stream_id: 1,
+                stream_seq_num: Sequence(1),
+                ppid: 1,
+                buf: Bytes::new(),
+                immediate: false,
+                unordered: false,
+                begin: false,
+                end: true,
+            })),
+            Instant::now(),
+        );
+
+        let r1 = rx.poll_data().unwrap();
+        assert_eq!(2, r1.ppid);
+        assert_eq!(1, r1.data.len());
+        let r2 = rx.poll_data().unwrap();
+        assert_eq!(1, r2.ppid);
+        assert_eq!(2, r2.data.len());
+        assert!(rx.poll_data().is_none_available());
+    }
+
     #[test]
     fn unordered_delivery() {
         let mut rx: AssociationRx<u64> = AssociationRx::new(AssocId(0), Tsn(1), 10, 100000000);
@@ -439,5 +508,6 @@ mod test {
         assert_eq!(1, r2.ppid);
         let r3 = rx.poll_data().unwrap();
         assert_eq!(2, r3.ppid);
+        assert!(rx.poll_data().is_none_available());
     }
 }
