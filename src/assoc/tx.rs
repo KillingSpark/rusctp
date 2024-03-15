@@ -557,7 +557,7 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
 
                 let front_buf_len = front.buf.len();
                 // check if we can just send the next chunk entirely or if we need to fragment
-                let packet = if front_buf_len < data_limit {
+                let packet = if front_buf_len <= data_limit {
                     let Some(mut packet) = self.out_queue.pop_front() else {
                         return PollSendResult::None;
                     };
