@@ -348,7 +348,9 @@ impl<FakeContent: FakeAddr> AssociationTx<FakeContent> {
             begin: true,
             end: true,
         });
-        stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
+        if !unordered {
+            stream_info.seqnum_ctr = stream_info.seqnum_ctr.increase();
+        }
         Ok(())
     }
 

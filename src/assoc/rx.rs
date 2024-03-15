@@ -15,7 +15,8 @@ pub struct AssociationRx<FakeContent: FakeAddr> {
     tsn_counter: Tsn,
     last_sent_arwnd: u32,
 
-    full_packets: VecDeque<StreamReceiveEvent>,
+    ordered_receive_events: VecDeque<StreamReceiveEvent>,
+    unordered_receive_events: VecDeque<StreamReceiveEvent>,
     per_stream: Vec<PerStreamInfo>,
     tsn_reorder_buffer: BTreeMap<Tsn, DataChunk>,
 
@@ -50,6 +51,16 @@ pub enum PollDataResult {
     Data(StreamReceiveEvent),
 }
 
+impl PollDataResult {
+    #[track_caller]
+    pub fn unwrap(self) -> StreamReceiveEvent {
+        match self {
+            PollDataResult::Data(data) => data,
+            _ => panic!("PollDataResult was: {:?}", self),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct StreamReceiveEvent {
     pub stream: u16,
@@ -73,7 +84,8 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             tsn_counter: init_tsn.decrease(),
             last_sent_arwnd: in_buffer_limit as u32,
 
-            full_packets: VecDeque::new(),
+            ordered_receive_events: VecDeque::new(),
+            unordered_receive_events: VecDeque::new(),
             per_stream: (0..in_streams)
                 .map(|_| PerStreamInfo {
                     reassemble_queue: BTreeMap::new(),
@@ -122,7 +134,7 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
             .map(|c| c.buf.len())
             .sum::<usize>()
             + self
-                .full_packets
+                .ordered_receive_events
                 .iter()
                 .flat_map(|x| &x.data)
                 .map(|x| x.buf.len())
@@ -140,7 +152,8 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         }
         eprintln!("We have {} bytes buffered", self.current_in_buffer);
         eprintln!("we have {} in tsn reorder", self.tsn_reorder_buffer.len());
-        eprintln!("We have {} full packets", self.full_packets.len());
+        eprintln!("We have {} complete ordered packets", self.ordered_receive_events.len());
+        eprintln!("We have {} complete unordered packets", self.ordered_receive_events.len());
         eprintln!(
             "Gap {:?} -> {:?}",
             self.tsn_counter,
@@ -227,8 +240,8 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                 }
             }
             blocks.push((
-                (block_start - self.tsn_counter.0) as u16,
-                (block_end - self.tsn_counter.0) as u16,
+                block_start.wrapping_sub(self.tsn_counter.0) as u16,
+                block_end.wrapping_sub(self.tsn_counter.0) as u16,
             ));
             //eprintln!("CumTsn {:?} Gap blocks: {:?}", self.tsn_counter, blocks);
         }
@@ -249,7 +262,10 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                 self.tsn_counter = self.tsn_counter.increase();
                 self.current_in_buffer += data.buf.len();
                 let is_end = data.end;
+
                 let seqnum = data.stream_seq_num;
+                let unordered = data.unordered;
+                let ppid = data.ppid;
                 stream_info
                     .reassemble_queue
                     .entry(data.stream_seq_num)
@@ -258,12 +274,27 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
 
                 if is_end {
                     let full = stream_info.reassemble_queue.remove(&seqnum).unwrap();
-                    self.full_packets.push_back(StreamReceiveEvent {
+
+                    if !full.iter().all(|p| {
+                        p.unordered == unordered
+                            && p.ppid == ppid
+                            && p.stream_id == stream_id
+                            && p.stream_seq_num == seqnum
+                    }) {
+                        // TODO how do we react to this?
+                    }
+
+                    let event = StreamReceiveEvent {
                         stream: stream_id,
-                        ppid: full[0].ppid,
-                        unordered: false,
+                        ppid,
+                        unordered,
                         data: full,
-                    });
+                    };
+                    if event.unordered {
+                        self.unordered_receive_events.push_back(event);
+                    } else {
+                        self.ordered_receive_events.push_back(event);
+                    }
                 }
 
                 // Check if any reordered packets can now be received
@@ -321,12 +352,86 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
         if self.shutdown_state.is_some() {
             PollDataResult::Error(PollDataError::Closed)
         } else {
-            if let Some(data) = self.full_packets.pop_front() {
+            if let Some(data) = self.pop_next_receive_event() {
                 self.current_in_buffer -= data.data.iter().map(|x| x.buf.len()).sum::<usize>();
                 return PollDataResult::Data(data);
             }
 
             PollDataResult::NoneAvailable
         }
+    }
+
+    fn pop_next_receive_event(&mut self) -> Option<StreamReceiveEvent> {
+        self.unordered_receive_events
+            .pop_front()
+            .or_else(|| self.ordered_receive_events.pop_front())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        packet::{data::DataChunk, Chunk, Sequence, Tsn},
+        AssocId,
+    };
+    use bytes::Bytes;
+    use std::time::Instant;
+
+    use super::{AssociationRx, RxNotification};
+    #[test]
+    fn unordered_delivery() {
+        let mut rx: AssociationRx<u64> = AssociationRx::new(AssocId(0), Tsn(1), 10, 100000000);
+
+        rx.notification(
+            RxNotification::Chunk(Chunk::Data(DataChunk {
+                tsn: Tsn(1),
+                stream_id: 1,
+                stream_seq_num: Sequence(1),
+                ppid: 1,
+                buf: Bytes::new(),
+                immediate: false,
+                unordered: false,
+                begin: true,
+                end: true,
+            })),
+            Instant::now(),
+        );
+
+        rx.notification(
+            RxNotification::Chunk(Chunk::Data(DataChunk {
+                tsn: Tsn(2),
+                stream_id: 1,
+                stream_seq_num: Sequence(2),
+                ppid: 2,
+                buf: Bytes::new(),
+                immediate: false,
+                unordered: false,
+                begin: true,
+                end: true,
+            })),
+            Instant::now(),
+        );
+
+        rx.notification(
+            RxNotification::Chunk(Chunk::Data(DataChunk {
+                tsn: Tsn(3),
+                stream_id: 1,
+                stream_seq_num: Sequence(2000),
+                ppid: 100,
+                buf: Bytes::new(),
+                immediate: false,
+                unordered: true,
+                begin: true,
+                end: true,
+            })),
+            Instant::now(),
+        );
+
+        let r1 = rx.poll_data().unwrap();
+        assert_eq!(100, r1.ppid);
+        let r2 = rx.poll_data().unwrap();
+        assert_eq!(1, r2.ppid);
+        let r3 = rx.poll_data().unwrap();
+        assert_eq!(2, r3.ppid);
     }
 }
