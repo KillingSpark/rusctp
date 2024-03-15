@@ -14,11 +14,11 @@ This is mostly a for-fun implementation of sctp. I am trying my hand at implemen
 * Retransmission of lost packets
 * "Weird" association initialization (which is the normal case for webrtc)
 * Shut down process
+* PMTU detection/discovery: https://datatracker.ietf.org/doc/rfc8899/
 
 ## Cant do / Roadmap
 * Reconfiguration (https://datatracker.ietf.org/doc/html/rfc6525)
-* PMTU detection/discovery: https://datatracker.ietf.org/doc/rfc8899/
-* Full interop with usrsctp
+* Parameterised reliability (Max retries, Timeout)
 
 # Interoperability
 ## Usersctp
