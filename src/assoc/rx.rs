@@ -53,6 +53,8 @@ pub enum PollDataResult {
 #[derive(Debug)]
 pub struct StreamReceiveEvent {
     pub stream: u16,
+    pub ppid: u32,
+    pub unordered: bool,
     pub data: Vec<DataChunk>,
 }
 
@@ -258,6 +260,8 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
                     let full = stream_info.reassemble_queue.remove(&seqnum).unwrap();
                     self.full_packets.push_back(StreamReceiveEvent {
                         stream: stream_id,
+                        ppid: full[0].ppid,
+                        unordered: false,
                         data: full,
                     });
                 }
