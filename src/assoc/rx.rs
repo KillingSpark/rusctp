@@ -388,61 +388,64 @@ impl<FakeContent: FakeAddr> AssociationRx<FakeContent> {
 mod test {
     use crate::{
         packet::{data::DataChunk, Chunk, Sequence, Tsn},
-        AssocId,
+        AssocId, FakeAddr,
     };
     use bytes::Bytes;
     use std::time::Instant;
 
     use super::{AssociationRx, RxNotification};
 
+    fn test_packet<X: FakeAddr>(
+        tsn: u32,
+        stream_id: u16,
+        stream_seq_num: u16,
+        ppid: u32,
+        unordered: bool,
+        begin: bool,
+        end: bool,
+    ) -> RxNotification<X> {
+        RxNotification::Chunk(Chunk::Data(DataChunk {
+            tsn: Tsn(tsn),
+            stream_id,
+            stream_seq_num: Sequence(stream_seq_num),
+            ppid,
+            buf: Bytes::new(),
+            immediate: false,
+            unordered,
+            begin,
+            end,
+        }))
+    }
+
+    #[test]
+    fn tsn_reordering() {
+        let mut rx: AssociationRx<u64> = AssociationRx::new(AssocId(0), Tsn(1), 10, 100000000);
+
+        rx.notification(test_packet(1, 1, 1, 1, false, true, true), Instant::now());
+
+        rx.poll_data().unwrap();
+        assert!(rx.poll_data().is_none_available());
+
+        rx.notification(test_packet(3, 1, 2, 2, false, true, true), Instant::now());
+
+        assert!(rx.poll_data().is_none_available());
+
+        rx.notification(test_packet(2, 1, 3, 1, false, true, true), Instant::now());
+
+        rx.poll_data().unwrap();
+        rx.poll_data().unwrap();
+        assert!(rx.poll_data().is_none_available());
+    }
+
     #[test]
     fn reassembly() {
         let mut rx: AssociationRx<u64> = AssociationRx::new(AssocId(0), Tsn(1), 10, 100000000);
 
-        rx.notification(
-            RxNotification::Chunk(Chunk::Data(DataChunk {
-                tsn: Tsn(1),
-                stream_id: 1,
-                stream_seq_num: Sequence(1),
-                ppid: 1,
-                buf: Bytes::new(),
-                immediate: false,
-                unordered: false,
-                begin: true,
-                end: false,
-            })),
-            Instant::now(),
-        );
+        rx.notification(test_packet(1, 1, 1, 1, false, true, false), Instant::now());
 
-        rx.notification(
-            RxNotification::Chunk(Chunk::Data(DataChunk {
-                tsn: Tsn(2),
-                stream_id: 2,
-                stream_seq_num: Sequence(1),
-                ppid: 2,
-                buf: Bytes::new(),
-                immediate: false,
-                unordered: false,
-                begin: true,
-                end: true,
-            })),
-            Instant::now(),
-        );
+        rx.notification(test_packet(2, 2, 2, 2, false, true, true), Instant::now());
 
-        rx.notification(
-            RxNotification::Chunk(Chunk::Data(DataChunk {
-                tsn: Tsn(3),
-                stream_id: 1,
-                stream_seq_num: Sequence(1),
-                ppid: 1,
-                buf: Bytes::new(),
-                immediate: false,
-                unordered: false,
-                begin: false,
-                end: true,
-            })),
-            Instant::now(),
-        );
+        rx.notification(test_packet(3, 1, 1, 1, false, false, true), Instant::now());
 
         let r1 = rx.poll_data().unwrap();
         assert_eq!(2, r1.ppid);
@@ -457,50 +460,11 @@ mod test {
     fn unordered_delivery() {
         let mut rx: AssociationRx<u64> = AssociationRx::new(AssocId(0), Tsn(1), 10, 100000000);
 
-        rx.notification(
-            RxNotification::Chunk(Chunk::Data(DataChunk {
-                tsn: Tsn(1),
-                stream_id: 1,
-                stream_seq_num: Sequence(1),
-                ppid: 1,
-                buf: Bytes::new(),
-                immediate: false,
-                unordered: false,
-                begin: true,
-                end: true,
-            })),
-            Instant::now(),
-        );
+        rx.notification(test_packet(1, 1, 1, 1, false, true, true), Instant::now());
 
-        rx.notification(
-            RxNotification::Chunk(Chunk::Data(DataChunk {
-                tsn: Tsn(2),
-                stream_id: 1,
-                stream_seq_num: Sequence(2),
-                ppid: 2,
-                buf: Bytes::new(),
-                immediate: false,
-                unordered: false,
-                begin: true,
-                end: true,
-            })),
-            Instant::now(),
-        );
+        rx.notification(test_packet(2, 1, 1, 100, true, true, true), Instant::now());
 
-        rx.notification(
-            RxNotification::Chunk(Chunk::Data(DataChunk {
-                tsn: Tsn(3),
-                stream_id: 1,
-                stream_seq_num: Sequence(2000),
-                ppid: 100,
-                buf: Bytes::new(),
-                immediate: false,
-                unordered: true,
-                begin: true,
-                end: true,
-            })),
-            Instant::now(),
-        );
+        rx.notification(test_packet(3, 1, 1, 2, false, true, true), Instant::now());
 
         let r1 = rx.poll_data().unwrap();
         assert_eq!(100, r1.ppid);
