@@ -2,6 +2,8 @@
 
 This is mostly a for-fun implementation of sctp. I am trying my hand at implementing stuff in a sans-io way but keeping useability in mind.
 
+Testing focuses on traffic wrapped in UDP but the sans-io core should not depend on that.
+
 ## Design goals
 
 * The core must be sans-io
@@ -18,7 +20,7 @@ This is mostly a for-fun implementation of sctp. I am trying my hand at implemen
 
 ## Cant do / Roadmap
 * Reconfiguration (https://datatracker.ietf.org/doc/html/rfc6525)
-* Parameterised reliability (Max retries, Timeout)
+* Parameterised reliability (https://www.rfc-editor.org/rfc/rfc3758.html)
 
 # Interoperability
 ## Usersctp
